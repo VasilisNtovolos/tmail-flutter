@@ -24,13 +24,19 @@ class TreeBuilder {
 
   String _sharedAccountKey(AccountId accountId) => accountId.id.value;
 
-  PresentationMailbox _createSharedAccountRoot(AccountId accountId) {
+  PresentationMailbox _createSharedAccountRoot(
+    AccountId accountId,
+    String? accountName,
+  ) {
+    final normalizedAccountName = accountName?.trim();
     return PresentationMailbox(
       MailboxId(Id(accountId.id.value)),
       accountId: accountId,
       isSharedAccount: true,
       isSharedAccountRoot: true,
-      name: MailboxName(accountId.id.value),
+      name: MailboxName(normalizedAccountName?.isNotEmpty == true
+          ? normalizedAccountName!
+          : accountId.id.value),
     );
   }
 
@@ -45,7 +51,10 @@ class TreeBuilder {
       if (!mailbox.isSharedAccount || accountId == null) continue;
 
       sharedAccountNodes.putIfAbsent(_sharedAccountKey(accountId), () {
-        final accountRoot = _createSharedAccountRoot(accountId);
+        final accountRoot = _createSharedAccountRoot(
+          accountId,
+          mailbox.sharedAccountName,
+        );
         final existingNode = nodeLookup[_mailboxKey(accountRoot)];
 
         return MailboxNode(

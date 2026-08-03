@@ -53,6 +53,7 @@ class PresentationMailbox with EquatableMixin {
   final AccountId? accountId;
   final bool isSharedAccount;
   final bool isSharedAccountRoot;
+  final String? sharedAccountName;
   final MailboxName? name;
   final MailboxId? parentId;
   final Role? role;
@@ -76,6 +77,7 @@ class PresentationMailbox with EquatableMixin {
       this.accountId,
     this.isSharedAccount = false,
     this.isSharedAccountRoot = false,
+    this.sharedAccountName,
     this.name,
       this.parentId,
       this.role,
@@ -101,6 +103,7 @@ class PresentationMailbox with EquatableMixin {
         accountId,
         isSharedAccount,
         isSharedAccountRoot,
+        sharedAccountName,
     name,
     parentId,
     role,
@@ -124,6 +127,7 @@ class PresentationMailbox with EquatableMixin {
     AccountId? accountId,
     bool? isSharedAccount,
     bool? isSharedAccountRoot,
+    String? sharedAccountName,
     MailboxName? name,
     MailboxId? parentId,
     Role? role,
@@ -146,6 +150,7 @@ class PresentationMailbox with EquatableMixin {
       accountId: accountId ?? this.accountId,
       isSharedAccount: isSharedAccount ?? this.isSharedAccount,
       isSharedAccountRoot: isSharedAccountRoot ?? this.isSharedAccountRoot,
+      sharedAccountName: sharedAccountName ?? this.sharedAccountName,
       name: name ?? this.name,
       parentId: parentId ?? this.parentId,
       role: role ?? this.role,

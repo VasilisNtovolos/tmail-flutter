@@ -8,6 +8,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import 'package:get/get.dart';
 import 'package:jmap_dart_client/jmap/account_id.dart';
+import 'package:jmap_dart_client/jmap/core/capability/capability_identifier.dart';
 import 'package:jmap_dart_client/jmap/core/error/method/error_method_response.dart';
 import 'package:jmap_dart_client/jmap/core/id.dart';
 import 'package:jmap_dart_client/jmap/core/session/session.dart';
@@ -98,6 +99,7 @@ import 'package:tmail_ui_user/features/thread/domain/state/empty_spam_folder_sta
 import 'package:tmail_ui_user/features/thread/domain/state/empty_trash_folder_state.dart';
 import 'package:tmail_ui_user/features/thread/domain/state/mark_as_multiple_email_read_state.dart';
 import 'package:tmail_ui_user/features/thread/domain/state/move_multiple_email_to_mailbox_state.dart';
+import 'package:tmail_ui_user/main/error/capability_validator.dart';
 import 'package:tmail_ui_user/main/localizations/app_localizations.dart';
 import 'package:tmail_ui_user/main/routes/app_routes.dart';
 import 'package:tmail_ui_user/main/routes/dialog_router.dart';
@@ -127,7 +129,11 @@ class MailboxController extends BaseMailboxController
 
   final Map<AccountId, List<PresentationMailbox>> _sharedMailboxesByAccount = {};
 
-  bool _didLoadSharedMailboxes = false;
+  final Set<AccountId> _loadedSharedMailboxAccounts = {};
+  Timer? _sharedMailboxLoadTimer;
+  final Map<AccountId, Future<void>> _sharedMailboxLoadOperations = {};
+  final Map<AccountId, Session> _sharedMailboxLoadSessions = {};
+  bool _isClosed = false;
 
   IOSSharingManager? _iosSharingManager;
   late MailboxActionReactor mailboxActionReactor;
@@ -200,6 +206,9 @@ class MailboxController extends BaseMailboxController
 
   @override
   void onClose() {
+    _isClosed = true;
+    _sharedMailboxLoadTimer?.cancel();
+    _sharedMailboxLoadTimer = null;
     _openMailboxEventStreamSubscription?.cancel();
     _openMailboxEventStreamSubscription = null;
     _openMailboxEventController.close();
@@ -309,14 +318,22 @@ class MailboxController extends BaseMailboxController
       if (sharedAccountId.asString == primaryAccountId.asString) {
         continue;
       }
+      if (!CapabilityIdentifier.jmapMail.isSupported(
+        currentSession,
+        sharedAccountId,
+      ) || _loadedSharedMailboxAccounts.contains(sharedAccountId)) {
+        continue;
+      }
 
-
+      var loadedSuccessfully = false;
+      var loadFailed = false;
       await for (final result in _sharedMailboxGetAllMailboxInteractor.execute(
         currentSession,
         sharedAccountId,
       )) {
         result.fold(
           (failure) {
+            loadFailed = true;
             logWarning(
               'MailboxController::_loadSharedMailboxes: failure '
               'account=${sharedAccountId.asString} '
@@ -327,12 +344,23 @@ class MailboxController extends BaseMailboxController
             if (success is! GetAllMailboxSuccess) {
               return;
             }
+            if (_isClosed ||
+                !identical(session, currentSession) ||
+                accountId != primaryAccountId) {
+              return;
+            }
 
+            final jmapAccountName =
+                currentSession.accounts[sharedAccountId]?.name.value.trim();
+            final accountName = jmapAccountName?.isNotEmpty == true
+                ? jmapAccountName
+                : sharedAccountId.asString;
             final accountMailboxes = success.mailboxList
                 .map(
                   (mailbox) => mailbox.copyWith(
                     accountId: sharedAccountId,
                     isSharedAccount: true,
+                    sharedAccountName: accountName,
                     namespace: mailbox.namespace ??
                         Namespace('Shared[${sharedAccountId.asString}]'),
                   ),
@@ -340,14 +368,28 @@ class MailboxController extends BaseMailboxController
                 .toList();
 
             _sharedMailboxesByAccount[sharedAccountId] = accountMailboxes;
-
-
+            loadedSuccessfully = true;
           },
         );
       }
+      if (loadedSuccessfully && !loadFailed) {
+        _loadedSharedMailboxAccounts.add(sharedAccountId);
+      }
     }
 
-    final personalMailboxesForUi = allMailboxes
+    if (_isClosed ||
+        !identical(session, currentSession) ||
+        accountId != primaryAccountId) {
+      return;
+    }
+    await _rebuildMailboxTree(allMailboxes);
+  }
+
+  Future<void> _rebuildMailboxTree(
+    List<PresentationMailbox> primaryMailboxes, {
+    bool refresh = false,
+  }) async {
+    final personalMailboxesForUi = primaryMailboxes
         .where(
           (mailbox) => !mailbox.isSharedAccount && !mailbox.isVirtualFolder,
         )
@@ -357,12 +399,70 @@ class MailboxController extends BaseMailboxController
         .expand((mailboxes) => mailboxes)
         .toList();
 
-    await buildTree([
+    final mailboxesForUi = [
       ...personalMailboxesForUi,
       ...sharedMailboxesForUi,
-    ], onUpdateMailboxCollectionCallback: updateMailboxCollection);
+    ];
+    if (refresh) {
+      await refreshTree(
+        mailboxesForUi,
+        onUpdateMailboxCollectionCallback: updateMailboxCollection,
+      );
+    } else {
+      await buildTree(
+        mailboxesForUi,
+        onUpdateMailboxCollectionCallback: updateMailboxCollection,
+      );
+    }
+    if (currentContext != null) {
+      syncAllMailboxWithDisplayName(currentContext!);
+    }
+    _setMapMailbox();
+    _setOutboxMailbox();
+  }
 
-
+  void _scheduleSharedMailboxLoad(
+    Session currentSession,
+    AccountId primaryAccountId, {
+    Duration delay = Duration.zero,
+  }) {
+    _sharedMailboxLoadTimer?.cancel();
+    _sharedMailboxLoadTimer = Timer(delay, () {
+      if (_isClosed ||
+          !identical(session, currentSession) ||
+          accountId != primaryAccountId) {
+        return;
+      }
+      final existingOperation =
+          _sharedMailboxLoadOperations[primaryAccountId];
+      if (existingOperation != null) {
+        if (identical(
+          _sharedMailboxLoadSessions[primaryAccountId],
+          currentSession,
+        )) {
+          return;
+        }
+        _sharedMailboxLoadOperations.remove(primaryAccountId);
+        _sharedMailboxLoadSessions.remove(primaryAccountId);
+      }
+      final operation = _loadSharedMailboxes(
+        currentSession,
+        primaryAccountId,
+      );
+      _sharedMailboxLoadOperations[primaryAccountId] = operation;
+      _sharedMailboxLoadSessions[primaryAccountId] = currentSession;
+      unawaited(operation.whenComplete(
+        () {
+          if (identical(
+            _sharedMailboxLoadOperations[primaryAccountId],
+            operation,
+          )) {
+            _sharedMailboxLoadOperations.remove(primaryAccountId);
+            _sharedMailboxLoadSessions.remove(primaryAccountId);
+          }
+        },
+      ));
+    });
   }
 
   void _registerObxStreamListener() {
@@ -371,21 +471,14 @@ class MailboxController extends BaseMailboxController
       final currentAccountId =accountId;
 
       if (currentAccountId != null && currentSession != null) {
+        _sharedMailboxesByAccount.clear();
+        _loadedSharedMailboxAccounts.clear();
         getAllMailbox(currentSession, currentAccountId);
-
-        if (!_didLoadSharedMailboxes) {
-          _didLoadSharedMailboxes = true;
-
-          unawaited(
-            Future<void>.delayed(
-              const Duration(seconds: 2),
-              () => _loadSharedMailboxes(
-                currentSession,
-                currentAccountId,
-              ),
-            ),
-          );
-        }
+        _scheduleSharedMailboxLoad(
+          currentSession,
+          currentAccountId,
+          delay: const Duration(seconds: 2),
+        );
       }
     });
 
@@ -725,16 +818,15 @@ class MailboxController extends BaseMailboxController
         .mailboxList
         .listSubscribedMailboxesAndDefaultMailboxes;
 
-    await refreshTree(
+    await _rebuildMailboxTree(
       listMailboxDisplayed.withoutVirtualMailbox,
-      onUpdateMailboxCollectionCallback: updateMailboxCollection,
+      refresh: true,
     );
-
-    if (currentContext != null) {
-      syncAllMailboxWithDisplayName(currentContext!);
+    final currentSession = session;
+    final primaryAccountId = accountId;
+    if (currentSession != null && primaryAccountId != null) {
+      _scheduleSharedMailboxLoad(currentSession, primaryAccountId);
     }
-    _setMapMailbox();
-    _setOutboxMailbox();
     _selectSelectedMailboxDefault();
     mailboxDashBoardController.refreshSpamReportBanner();
 
@@ -859,27 +951,13 @@ class MailboxController extends BaseMailboxController
       allMailboxes.add(mailbox.toPresentationMailbox());
     }
 
-    await buildTree(
-      allMailboxes.withoutVirtualMailbox,
-      onUpdateMailboxCollectionCallback: updateMailboxCollection,
-    );
-    if (currentContext != null) {
-      syncAllMailboxWithDisplayName(currentContext!);
-    }
-    _setMapMailbox();
-    _setOutboxMailbox();
+    await _rebuildMailboxTree(allMailboxes.withoutVirtualMailbox);
 
     final currentSession = session;
     final primaryAccountId = accountId;
 
-    if (!_didLoadSharedMailboxes &&
-        currentSession != null &&
-        primaryAccountId != null) {
-      _didLoadSharedMailboxes = true;
-
-      unawaited(
-        _loadSharedMailboxes(currentSession, primaryAccountId),
-      );
+    if (currentSession != null && primaryAccountId != null) {
+      _scheduleSharedMailboxLoad(currentSession, primaryAccountId);
     }
   }
 
@@ -923,7 +1001,8 @@ class MailboxController extends BaseMailboxController
           handleLabelNavigation(_navigationRouter!, _navigationRouter!.labelId!,);
         } else if (_navigationRouter!.mailboxId != null) {
           final matchedMailboxNode = findMailboxNodeById(_navigationRouter!.mailboxId!,);
-          if (matchedMailboxNode != null) {
+          if (matchedMailboxNode != null &&
+              !matchedMailboxNode.item.isSharedAccountRoot) {
             if (_navigationRouter!.emailId != null) {
               _openEmailInsideMailboxFromLocationBar(
                 matchedMailboxNode.item,
@@ -1480,15 +1559,12 @@ class MailboxController extends BaseMailboxController
     currentMailboxState = success.currentMailboxState;
     log('MailboxController::_handleGetAllMailboxSuccess:currentMailboxState: $currentMailboxState',);
     final listMailboxDisplayed = success.mailboxList.listSubscribedMailboxesAndDefaultMailboxes;
-    await buildTree(
-      listMailboxDisplayed.withoutVirtualMailbox,
-      onUpdateMailboxCollectionCallback: updateMailboxCollection,
-    );
-    if (currentContext != null) {
-      syncAllMailboxWithDisplayName(currentContext!);
+    await _rebuildMailboxTree(listMailboxDisplayed.withoutVirtualMailbox);
+    final currentSession = session;
+    final primaryAccountId = accountId;
+    if (currentSession != null && primaryAccountId != null) {
+      _scheduleSharedMailboxLoad(currentSession, primaryAccountId);
     }
-    _setMapMailbox();
-    _setOutboxMailbox();
   }
 
   Future<void> _updateMailboxIdsBlockNotificationToKeychain(List<PresentationMailbox> mailboxes,) async {

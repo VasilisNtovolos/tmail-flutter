@@ -81,7 +81,8 @@ void main() {
             EmailFixtures.email5.toPresentationEmail(),
           }.toList(),
           currentEmailState: jmap.State('s1'),
-          currentMailboxId: MailboxFixtures.inboxMailbox.id)
+          currentMailboxId: MailboxFixtures.inboxMailbox.id,
+          currentAccountId: AccountFixtures.aliceAccountId)
         )
       }));
     });

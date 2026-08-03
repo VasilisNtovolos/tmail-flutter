@@ -1,5 +1,6 @@
 import 'package:core/presentation/state/failure.dart';
 import 'package:core/presentation/state/success.dart';
+import 'package:jmap_dart_client/jmap/account_id.dart';
 import 'package:jmap_dart_client/jmap/core/state.dart';
 import 'package:jmap_dart_client/jmap/mail/mailbox/mailbox.dart';
 import 'package:model/email/presentation_email.dart';
@@ -10,11 +11,13 @@ class GetAllEmailSuccess extends UIState {
   final List<PresentationEmail> emailList;
   final State? currentEmailState;
   final MailboxId? currentMailboxId;
+  final AccountId? currentAccountId;
 
   GetAllEmailSuccess({
     required this.emailList,
     this.currentEmailState,
     this.currentMailboxId,
+    this.currentAccountId,
   });
 
   @override
@@ -22,6 +25,7 @@ class GetAllEmailSuccess extends UIState {
     emailList,
     currentEmailState,
     currentMailboxId,
+    currentAccountId,
   ];
 }
 

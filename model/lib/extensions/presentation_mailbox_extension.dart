@@ -133,7 +133,7 @@ extension PresentationMailboxExtension on PresentationMailbox {
   }
 
   bool get allowedToDisplay =>
-      isSharedAccountRoot || isSubscribedMailbox || isDefault;
+      !isSharedAccountRoot && (isSubscribedMailbox || isDefault);
 
   MailboxId? get mailboxId {
     if (id == PresentationMailbox.unifiedMailbox.id) {
@@ -151,6 +151,7 @@ extension PresentationMailboxExtension on PresentationMailbox {
       accountId: accountId,
       isSharedAccount: isSharedAccount,
       isSharedAccountRoot: isSharedAccountRoot,
+      sharedAccountName: sharedAccountName,
       name: name,
       parentId: parentId,
       role: role,
@@ -176,6 +177,7 @@ extension PresentationMailboxExtension on PresentationMailbox {
       accountId: accountId,
       isSharedAccount: isSharedAccount,
       isSharedAccountRoot: isSharedAccountRoot,
+      sharedAccountName: sharedAccountName,
       name: name,
       parentId: parentId,
       role: role,
@@ -201,6 +203,7 @@ extension PresentationMailboxExtension on PresentationMailbox {
       accountId: accountId,
       isSharedAccount: isSharedAccount,
       isSharedAccountRoot: isSharedAccountRoot,
+      sharedAccountName: sharedAccountName,
       name: name,
       parentId: parentId,
       role: role,
@@ -244,6 +247,7 @@ extension PresentationMailboxExtension on PresentationMailbox {
       accountId: accountId,
       isSharedAccount: isSharedAccount,
       isSharedAccountRoot: isSharedAccountRoot,
+      sharedAccountName: sharedAccountName,
       name: name,
       parentId: parentId,
       role: role,
@@ -269,6 +273,7 @@ extension PresentationMailboxExtension on PresentationMailbox {
       accountId: accountId,
       isSharedAccount: isSharedAccount,
       isSharedAccountRoot: isSharedAccountRoot,
+      sharedAccountName: sharedAccountName,
       name: name,
       parentId: parentId,
       role: role,

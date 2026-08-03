@@ -88,7 +88,8 @@ void main() {
             EmailFixtures.email2.toPresentationEmail()
           }.toList(),
           currentEmailState: jmap.State('s1'),
-          currentMailboxId: MailboxFixtures.inboxMailbox.id)
+          currentMailboxId: MailboxFixtures.inboxMailbox.id,
+          currentAccountId: AccountFixtures.aliceAccountId)
         ),
         Right(GetAllEmailSuccess(
           emailList: {
@@ -99,7 +100,8 @@ void main() {
             EmailFixtures.email5.toPresentationEmail(),
           }.toList(),
           currentEmailState: jmap.State('s1'),
-          currentMailboxId: MailboxFixtures.inboxMailbox.id)
+          currentMailboxId: MailboxFixtures.inboxMailbox.id,
+          currentAccountId: AccountFixtures.aliceAccountId)
         )
       }));
     });
@@ -168,6 +170,7 @@ void main() {
             ],
             currentEmailState: jmap.State('s_cached'),
             currentMailboxId: MailboxFixtures.inboxMailbox.id,
+            currentAccountId: AccountFixtures.aliceAccountId,
           ),
         ),
       );
@@ -183,6 +186,7 @@ void main() {
             ],
             currentEmailState: jmap.State('s_cached'),
             currentMailboxId: MailboxFixtures.inboxMailbox.id,
+            currentAccountId: AccountFixtures.aliceAccountId,
           ),
         ),
       );
@@ -267,6 +271,7 @@ void main() {
             emailList: const [],
             currentEmailState: null,
             currentMailboxId: MailboxFixtures.inboxMailbox.id,
+            currentAccountId: AccountFixtures.aliceAccountId,
           ),
         ),
       );
@@ -281,6 +286,7 @@ void main() {
             ],
             currentEmailState: jmap.State('server_1'),
             currentMailboxId: MailboxFixtures.inboxMailbox.id,
+            currentAccountId: AccountFixtures.aliceAccountId,
           ),
         ),
       );
@@ -398,6 +404,7 @@ void main() {
             ],
             currentEmailState: jmap.State('s1'),
             currentMailboxId: MailboxFixtures.inboxMailbox.id,
+            currentAccountId: AccountFixtures.aliceAccountId,
           ),
         ),
       );
@@ -413,6 +420,7 @@ void main() {
             ],
             currentEmailState: jmap.State('s1'),
             currentMailboxId: MailboxFixtures.inboxMailbox.id,
+            currentAccountId: AccountFixtures.aliceAccountId,
           ),
         ),
       );

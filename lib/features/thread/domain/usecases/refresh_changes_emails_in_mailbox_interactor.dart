@@ -47,6 +47,7 @@ class RefreshChangesEmailsInMailboxInteractor {
           emailFilter: emailFilter)
         .map((emailResponse) => _toGetEmailState(
           emailResponse: emailResponse,
+          currentAccountId: accountId,
           currentMailboxId: emailFilter?.mailboxId
         ));
     } catch (e) {
@@ -56,6 +57,7 @@ class RefreshChangesEmailsInMailboxInteractor {
 
   Either<Failure, Success> _toGetEmailState({
     required EmailsResponse emailResponse,
+    required AccountId currentAccountId,
     MailboxId? currentMailboxId
   }) {
     final presentationEmailList = emailResponse.emailList
@@ -64,6 +66,7 @@ class RefreshChangesEmailsInMailboxInteractor {
     return Right<Failure, Success>(RefreshChangesAllEmailSuccess(
       emailList: presentationEmailList,
       currentEmailState: emailResponse.state,
+      currentAccountId: currentAccountId,
       currentMailboxId: currentMailboxId,
       emailChangeResponse: emailResponse.emailChangeResponse,
     ));

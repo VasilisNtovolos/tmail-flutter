@@ -490,6 +490,7 @@ void main() {
         useCache: anyNamed('useCache'),
         forceEmailQuery: anyNamed('forceEmailQuery'),
         collapseThreads: anyNamed('collapseThreads'),
+        requestedMailboxId: anyNamed('requestedMailboxId'),
       ));
       expect(searchController.sortOrderFiltered, EmailSortOrderType.oldest);
       expect(searchController.searchEmailFilter.value, SearchEmailFilter.withSortOrder(EmailSortOrderType.oldest));
@@ -504,6 +505,7 @@ void main() {
         useCache: true,
         forceEmailQuery: false,
         collapseThreads: false,
+        requestedMailboxId: testMailboxId,
       ));
     });
 
@@ -560,6 +562,7 @@ void main() {
         useCache: anyNamed('useCache'),
         forceEmailQuery: anyNamed('forceEmailQuery'),
         collapseThreads: anyNamed('collapseThreads'),
+        requestedMailboxId: anyNamed('requestedMailboxId'),
       ));
       expect(searchController.sortOrderFiltered, SearchEmailFilter.defaultSortOrder);
       expect(searchController.searchEmailFilter.value, SearchEmailFilter.initial());
@@ -574,6 +577,7 @@ void main() {
         useCache: true,
         forceEmailQuery: false,
         collapseThreads: false,
+        requestedMailboxId: testMailboxId,
       )).called(1);
     });
 

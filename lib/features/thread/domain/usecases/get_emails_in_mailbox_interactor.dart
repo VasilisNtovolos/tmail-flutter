@@ -31,6 +31,7 @@ class GetEmailsInMailboxInteractor {
       bool getLatestChanges = true,
       bool useCache = true,
       bool forceEmailQuery = false,
+      MailboxId? requestedMailboxId,
     }
   ) async* {
     try {
@@ -73,7 +74,8 @@ class GetEmailsInMailboxInteractor {
       yield* sourceStream.map(
         (emailResponse) => _toGetEmailState(
           emailResponse: emailResponse,
-          currentMailboxId: emailFilter?.mailboxId,
+          currentAccountId: accountId,
+          currentMailboxId: requestedMailboxId ?? emailFilter?.mailboxId,
         ),
       );
     } catch (e) {
@@ -83,6 +85,7 @@ class GetEmailsInMailboxInteractor {
 
   Either<Failure, Success> _toGetEmailState({
     required EmailsResponse emailResponse,
+    required AccountId currentAccountId,
     MailboxId? currentMailboxId,
   }) {
     final presentationEmailList = emailResponse.emailList
@@ -91,6 +94,7 @@ class GetEmailsInMailboxInteractor {
     return Right<Failure, Success>(GetAllEmailSuccess(
       emailList: presentationEmailList,
       currentEmailState: emailResponse.state,
+      currentAccountId: currentAccountId,
       currentMailboxId: currentMailboxId));
   }
 }

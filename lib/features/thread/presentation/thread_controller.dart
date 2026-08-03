@@ -109,6 +109,7 @@ class ThreadController extends BaseController with EmailActionController {
   bool canLoadMore = true;
   bool canSearchMore = true;
   MailboxId? _currentMemoryMailboxId;
+  AccountId? _currentMemoryAccountId;
   int _peakEmailCount = 0;
   final ScrollController listEmailController = ScrollController();
   final latestEmailSelectedOrUnselected = Rxn<PresentationEmail>();
@@ -172,6 +173,7 @@ class ThreadController extends BaseController with EmailActionController {
   @override
   void onClose() {
     _currentMemoryMailboxId = null;
+    _currentMemoryAccountId = null;
     listEmailController.dispose();
     if (PlatformInfo.isWeb) {
       _resizeBrowserStreamSubscription?.cancel();
@@ -285,9 +287,14 @@ class ThreadController extends BaseController with EmailActionController {
   void _registerObxStreamListener() {
     ever(mailboxDashBoardController.selectedMailbox, (mailbox) {
       log('ThreadController::_registerObxStreamListener:SelectedMailbox: ${mailbox?.id} - ${mailbox?.name} | CurrentMemoryMailboxId: $_currentMemoryMailboxId');
+      final mailboxAccountId = mailbox is PresentationMailbox
+          ? mailbox.accountId ?? mailboxDashBoardController.accountId.value
+          : null;
       if (mailbox is PresentationMailbox
-          && mailbox.mailboxId != _currentMemoryMailboxId) {
+          && (mailbox.mailboxId != _currentMemoryMailboxId ||
+              mailboxAccountId != _currentMemoryAccountId)) {
         _currentMemoryMailboxId = mailbox.id;
+        _currentMemoryAccountId = mailboxAccountId;
         consumeState(Stream.value(Right(GetAllEmailLoading())));
         resetToOriginalValue();
         getAllEmailAction(
@@ -297,6 +304,7 @@ class ThreadController extends BaseController with EmailActionController {
         mailboxDashBoardController.setIsFirstSessionLoad(false);
       } else if (mailbox == null) { // disable current mailbox when search active
         _currentMemoryMailboxId = null;
+        _currentMemoryAccountId = null;
         resetToOriginalValue();
       }
     });
@@ -609,14 +617,15 @@ class ThreadController extends BaseController with EmailActionController {
     bool shouldJumpToFirstEmail = true,
   }) {
     log('ThreadController::_getAllEmailSuccess: GetAllForMailboxId = ${success.currentMailboxId?.asString} | SELECTED_MAILBOX_ID = ${selectedMailboxId?.asString} | SELECTED_MAILBOX_NAME = ${selectedMailbox?.name?.name}');
-    mailboxDashBoardController.updateRefreshAllEmailState(Right(RefreshAllEmailSuccess()));
     final currentMailboxId = success.currentMailboxId;
-    final isVirtualFolder = selectedMailbox?.isVirtualFolder == true;
 
-    if (currentMailboxId != null &&
-        (isVirtualFolder || currentMailboxId != selectedMailboxId)) {
+    if (!_isResponseForSelectedMailbox(
+      success.currentAccountId,
+      currentMailboxId,
+    )) {
       return;
     }
+    mailboxDashBoardController.updateRefreshAllEmailState(Right(RefreshAllEmailSuccess()));
     mailboxDashBoardController.setCurrentEmailState(success.currentEmailState);
     final newListEmail = success.emailList.syncPresentationEmail(
       mapMailboxById: mailboxDashBoardController.mapMailboxById,
@@ -642,6 +651,12 @@ class ThreadController extends BaseController with EmailActionController {
   }
 
   void _handleOnDoneGetAllEmailSuccess(GetAllEmailSuccess success) {
+    if (!_isResponseForSelectedMailbox(
+      success.currentAccountId,
+      success.currentMailboxId,
+    )) {
+      return;
+    }
     if (PlatformInfo.isWeb && mailboxDashBoardController.isEmailListDisplayed) {
       refocusMailShortcutFocus();
     }
@@ -656,6 +671,14 @@ class ThreadController extends BaseController with EmailActionController {
       _performAutomaticallyLoadMoreEmails();
     }
   }
+
+  bool _isResponseForSelectedMailbox(
+    AccountId? responseAccountId,
+    MailboxId? responseMailboxId,
+  ) =>
+      (responseAccountId == null || responseAccountId == _accountId) &&
+      (responseMailboxId == null ||
+          responseMailboxId == selectedMailboxId);
 
   void _handleOnDoneGetAllEmailFailure() {
     log('ThreadController::_handleOnDoneGetAllEmailFailure');
@@ -676,8 +699,10 @@ class ThreadController extends BaseController with EmailActionController {
     final currentMailboxId = success.currentMailboxId;
     final isVirtualFolder = selectedMailbox?.isVirtualFolder == true;
 
-    if (currentMailboxId != null &&
-        (isVirtualFolder || currentMailboxId != selectedMailboxId)) {
+    if ((success.currentAccountId != null &&
+            success.currentAccountId != _accountId) ||
+        (currentMailboxId != null &&
+            (isVirtualFolder || currentMailboxId != selectedMailboxId))) {
       return;
     }
     mailboxDashBoardController.setCurrentEmailState(success.currentEmailState);
@@ -738,6 +763,7 @@ class ThreadController extends BaseController with EmailActionController {
         useCache: selectedMailbox?.isCacheable ?? false,
         forceEmailQuery: forceEmailQuery,
         collapseThreads: _shouldCollapseThreads,
+        requestedMailboxId: selectedMailboxId,
       ));
     } else {
       consumeState(Stream.value(Left(GetAllEmailFailure(NotFoundSessionException()))));

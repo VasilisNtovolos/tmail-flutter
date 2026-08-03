@@ -8,6 +8,7 @@ import 'package:dartz/dartz.dart' hide State;
 import 'package:flutter/material.dart' hide SearchController, State;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:get/get.dart';
+import 'package:jmap_dart_client/jmap/account_id.dart';
 import 'package:jmap_dart_client/jmap/core/id.dart';
 import 'package:jmap_dart_client/jmap/core/state.dart';
 import 'package:jmap_dart_client/jmap/core/unsigned_int.dart';
@@ -523,6 +524,7 @@ void main() {
           forceEmailQuery: anyNamed('forceEmailQuery'),
           collapseThreads: anyNamed('collapseThreads'),
           getLatestChanges: false,
+          requestedMailboxId: mailboxAfter.id,
         ));
         
         // assert
@@ -538,8 +540,105 @@ void main() {
           forceEmailQuery: anyNamed('forceEmailQuery'),
           collapseThreads: anyNamed('collapseThreads'),
           getLatestChanges: false,
+          requestedMailboxId: mailboxAfter.id,
         ));
       });
+
+      test(
+        'same mailbox ID under a different account triggers a reload',
+      () async {
+        final mailboxId = MailboxId(Id('shared-mailbox-id'));
+        final otherAccountId = AccountId(Id('other-account-id'));
+        final selectedMailbox = Rxn(PresentationMailbox(
+          mailboxId,
+          accountId: AccountFixtures.aliceAccountId,
+        ));
+        when(mockMailboxDashBoardController.sessionCurrent).thenReturn(SessionFixtures.aliceSession);
+        when(mockMailboxDashBoardController.accountId).thenReturn(Rxn(AccountFixtures.aliceAccountId));
+        when(mockMailboxDashBoardController.selectedMailbox).thenReturn(selectedMailbox);
+        when(mockMailboxDashBoardController.searchController).thenReturn(mockSearchController);
+        when(mockMailboxDashBoardController.dashBoardAction).thenReturn(Rxn());
+        when(mockMailboxDashBoardController.emailUIAction).thenReturn(Rxn());
+        when(mockMailboxDashBoardController.viewState).thenReturn(Rx(Right(UIState.idle)));
+        when(mockMailboxDashBoardController.emailsInCurrentMailbox).thenReturn(RxList());
+        when(mockMailboxDashBoardController.listEmailSelected).thenReturn(RxList());
+        when(mockMailboxDashBoardController.currentSelectMode).thenReturn(Rx(SelectMode.INACTIVE));
+        when(mockMailboxDashBoardController.filterMessageOption).thenReturn(Rx(FilterMessageOption.all));
+        when(mockSearchController.searchState).thenReturn(SearchState(SearchStatus.INACTIVE).obs);
+
+        obxListenerController.onInit();
+        selectedMailbox.value = PresentationMailbox(
+          mailboxId,
+          accountId: otherAccountId,
+        );
+
+        await untilCalled(mockGetEmailsInMailboxInteractor.execute(
+          any,
+          otherAccountId,
+          limit: anyNamed('limit'),
+          sort: anyNamed('sort'),
+          emailFilter: anyNamed('emailFilter'),
+          propertiesCreated: anyNamed('propertiesCreated'),
+          propertiesUpdated: anyNamed('propertiesUpdated'),
+          useCache: anyNamed('useCache'),
+          forceEmailQuery: anyNamed('forceEmailQuery'),
+          collapseThreads: anyNamed('collapseThreads'),
+          getLatestChanges: false,
+          requestedMailboxId: mailboxId,
+        ));
+
+        verify(mockGetEmailsInMailboxInteractor.execute(
+          any,
+          otherAccountId,
+          limit: anyNamed('limit'),
+          sort: anyNamed('sort'),
+          emailFilter: anyNamed('emailFilter'),
+          propertiesCreated: anyNamed('propertiesCreated'),
+          propertiesUpdated: anyNamed('propertiesUpdated'),
+          useCache: anyNamed('useCache'),
+          forceEmailQuery: anyNamed('forceEmailQuery'),
+          collapseThreads: anyNamed('collapseThreads'),
+          getLatestChanges: false,
+          requestedMailboxId: mailboxId,
+        )).called(1);
+      });
+    });
+
+    test(
+      'stale GetAllEmailSuccess does not update email, refresh, pagination, or auto-load',
+    () {
+      final mailboxId = MailboxId(Id('same-mailbox-id'));
+      final previousAccountId = AccountFixtures.aliceAccountId;
+      final selectedAccountId = AccountId(Id('selected-account-id'));
+      final existingEmails = RxList<PresentationEmail>([
+        PresentationEmail(id: EmailId(Id('existing-email'))),
+      ]);
+      when(mockMailboxDashBoardController.accountId).thenReturn(Rxn(previousAccountId));
+      when(mockMailboxDashBoardController.selectedMailbox).thenReturn(Rxn(
+        PresentationMailbox(mailboxId, accountId: selectedAccountId),
+      ));
+      when(mockMailboxDashBoardController.emailsInCurrentMailbox).thenReturn(existingEmails);
+      clearInteractions(mockMailboxDashBoardController);
+      clearInteractions(mockLoadMoreEmailsInMailboxInteractor);
+      threadController.canLoadMore = false;
+      final staleSuccess = GetAllEmailSuccess(
+        emailList: List.generate(
+          ThreadConstants.maxCountEmails,
+          (index) => PresentationEmail(id: EmailId(Id('stale-$index'))),
+        ),
+        currentAccountId: previousAccountId,
+        currentMailboxId: mailboxId,
+      );
+
+      threadController.handleSuccessViewState(staleSuccess);
+      threadController.viewState.value = Right(staleSuccess);
+      threadController.onDone();
+
+      expect(existingEmails.single.id, EmailId(Id('existing-email')));
+      expect(threadController.canLoadMore, isFalse);
+      verifyNever(mockMailboxDashBoardController.updateEmailList(any));
+      verifyNever(mockMailboxDashBoardController.updateRefreshAllEmailState(any));
+      verifyNever(mockLoadMoreEmailsInMailboxInteractor.execute(any));
     });
 
     group('limitEmailFetched::test', () {
@@ -751,6 +850,7 @@ void main() {
 
     group('canLoadMore after getAllEmail completes test:', () {
       final mailboxId = MailboxId(Id('inbox'));
+      final accountId = AccountFixtures.aliceAccountId;
 
       List<PresentationEmail> makeEmails(int count) => List.generate(
         count,
@@ -763,6 +863,10 @@ void main() {
       void setupMocksForOnDone() {
         PlatformInfo.isTestingForWeb = false;
         when(mockMailboxDashBoardController.isEmailListDisplayed).thenReturn(false);
+        when(mockMailboxDashBoardController.accountId).thenReturn(Rxn(accountId));
+        when(mockMailboxDashBoardController.selectedMailbox).thenReturn(Rxn(
+          PresentationMailbox(mailboxId, accountId: accountId),
+        ));
       }
 
       tearDown(() => PlatformInfo.isTestingForWeb = false);
@@ -775,7 +879,11 @@ void main() {
         setupMocksForOnDone();
         final emails = makeEmails(3);
         threadController.viewState.value = Right(
-          GetAllEmailSuccess(emailList: emails, currentMailboxId: mailboxId),
+          GetAllEmailSuccess(
+            emailList: emails,
+            currentMailboxId: mailboxId,
+            currentAccountId: accountId,
+          ),
         );
 
         threadController.onDone();
@@ -791,7 +899,11 @@ void main() {
         setupMocksForOnDone();
         final emails = makeEmails(ThreadConstants.maxCountEmails);
         threadController.viewState.value = Right(
-          GetAllEmailSuccess(emailList: emails, currentMailboxId: mailboxId),
+          GetAllEmailSuccess(
+            emailList: emails,
+            currentMailboxId: mailboxId,
+            currentAccountId: accountId,
+          ),
         );
 
         threadController.onDone();
@@ -806,7 +918,11 @@ void main() {
       () {
         setupMocksForOnDone();
         threadController.viewState.value = Right(
-          GetAllEmailSuccess(emailList: makeEmails(0), currentMailboxId: mailboxId),
+          GetAllEmailSuccess(
+            emailList: makeEmails(0),
+            currentMailboxId: mailboxId,
+            currentAccountId: accountId,
+          ),
         );
 
         threadController.onDone();
