@@ -1,8 +1,291 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:core/utils/platform_info.dart';
+import 'package:jmap_dart_client/jmap/account_id.dart';
+import 'package:jmap_dart_client/jmap/core/id.dart';
+import 'package:jmap_dart_client/jmap/mail/email/email.dart';
+import 'package:jmap_dart_client/jmap/mail/mailbox/mailbox.dart';
+import 'package:model/mailbox/presentation_mailbox.dart';
+import 'package:tmail_ui_user/features/mailbox/presentation/extensions/presentation_mailbox_extension.dart';
+import 'package:tmail_ui_user/features/thread/domain/model/search_query.dart';
 import 'package:tmail_ui_user/main/routes/app_routes.dart';
+import 'package:tmail_ui_user/main/routes/navigation_router.dart';
 import 'package:tmail_ui_user/main/routes/route_utils.dart';
 
 void main() {
+  group('mailbox account routing', () {
+    final mailboxId = MailboxId(Id('shared-mailbox'));
+    final mailboxAccountId = AccountId(Id('shared-account'));
+
+    setUp(() => PlatformInfo.isTestingForWeb = true);
+    tearDown(() => PlatformInfo.isTestingForWeb = false);
+
+    test('shared mailbox URL includes encoded mailbox and account IDs', () {
+      final uri = Uri.parse(RouteUtils.generateNavigationRoute(
+        AppRoutes.dashboard,
+        router: NavigationRouter(
+          mailboxId: mailboxId,
+          mailboxAccountId: mailboxAccountId,
+        ),
+      ));
+
+      expect(uri.queryParameters[RouteUtils.paramContext], 'shared-mailbox');
+      expect(
+        uri.queryParameters[RouteUtils.paramMailboxAccountId],
+        'shared-account',
+      );
+    });
+
+    test('mailbox route helper includes account only for shared real mailboxes', () {
+      final sharedMailbox = PresentationMailbox(
+        mailboxId,
+        accountId: mailboxAccountId,
+        isSharedAccount: true,
+      );
+      final personalMailbox = PresentationMailbox(
+        mailboxId,
+        accountId: AccountId(Id('primary-account')),
+      );
+      final sharedAccountRoot = PresentationMailbox(
+        mailboxId,
+        accountId: mailboxAccountId,
+        isSharedAccount: true,
+        isSharedAccountRoot: true,
+      );
+
+      expect(sharedMailbox.browserRouteMailboxAccountId, mailboxAccountId);
+      expect(personalMailbox.browserRouteMailboxAccountId, isNull);
+      expect(sharedAccountRoot.browserRouteMailboxAccountId, isNull);
+      expect(sharedMailbox.isOpenableMailboxRoute, isTrue);
+      expect(sharedAccountRoot.isOpenableMailboxRoute, isFalse);
+    });
+
+    test('parsing reconstructs mailbox account identity', () {
+      final router = RouteUtils.parsingRouteParametersToNavigationRouter({
+        RouteUtils.paramContext: mailboxId.id.value,
+        RouteUtils.paramMailboxAccountId: mailboxAccountId.id.value,
+      });
+
+      expect(router.mailboxId, mailboxId);
+      expect(router.mailboxAccountId, mailboxAccountId);
+    });
+
+    test('legacy primary mailbox route keeps account context absent', () {
+      final router = RouteUtils.parsingRouteParametersToNavigationRouter({
+        RouteUtils.paramContext: mailboxId.id.value,
+      });
+
+      expect(router.mailboxId, mailboxId);
+      expect(router.mailboxAccountId, isNull);
+    });
+
+    test('account parameter without mailbox context is malformed', () {
+      final router = RouteUtils.parsingRouteParametersToNavigationRouter({
+        RouteUtils.paramMailboxAccountId: mailboxAccountId.id.value,
+      });
+
+      expect(router.mailboxId, isNull);
+      expect(router.mailboxAccountId, isNull);
+      expect(router.hasMalformedMailboxContext, isTrue);
+    });
+
+    test('account parameter without mailbox is malformed on email and search routes', () {
+      final emailRouter = RouteUtils.parsingRouteParametersToNavigationRouter({
+        RouteUtils.paramID: 'email-id',
+        RouteUtils.paramMailboxAccountId: mailboxAccountId.id.value,
+      });
+      final searchRouter = RouteUtils.parsingRouteParametersToNavigationRouter({
+        RouteUtils.paramType: DashboardType.search.name,
+        RouteUtils.paramQuery: 'query',
+        RouteUtils.paramMailboxAccountId: mailboxAccountId.id.value,
+      });
+
+      expect(emailRouter.hasMalformedMailboxContext, isTrue);
+      expect(searchRouter.hasMalformedMailboxContext, isTrue);
+    });
+
+    test('label with mailbox account context is malformed', () {
+      final accountOnlyRouter =
+          RouteUtils.parsingRouteParametersToNavigationRouter({
+        RouteUtils.paramLabelId: 'label-id',
+        RouteUtils.paramMailboxAccountId: mailboxAccountId.id.value,
+      });
+      final mailboxAndAccountRouter =
+          RouteUtils.parsingRouteParametersToNavigationRouter({
+        RouteUtils.paramLabelId: 'label-id',
+        RouteUtils.paramContext: mailboxId.id.value,
+        RouteUtils.paramMailboxAccountId: mailboxAccountId.id.value,
+      });
+
+      expect(accountOnlyRouter.hasMalformedMailboxContext, isTrue);
+      expect(mailboxAndAccountRouter.hasMalformedMailboxContext, isTrue);
+      expect(accountOnlyRouter.labelId, Id('label-id'));
+      expect(mailboxAndAccountRouter.mailboxId, isNull);
+    });
+
+    test('legacy label and mailbox context keeps existing label behavior', () {
+      final router = RouteUtils.parsingRouteParametersToNavigationRouter({
+        RouteUtils.paramLabelId: 'label-id',
+        RouteUtils.paramContext: mailboxId.id.value,
+      });
+
+      expect(router.hasMalformedMailboxContext, isFalse);
+      expect(router.labelId, Id('label-id'));
+      expect(router.mailboxId, isNull);
+    });
+
+    test('empty mailbox account parameter is malformed', () {
+      final router = RouteUtils.parsingRouteParametersToNavigationRouter({
+        RouteUtils.paramContext: mailboxId.id.value,
+        RouteUtils.paramMailboxAccountId: '   ',
+      });
+
+      expect(router.hasMalformedMailboxContext, isTrue);
+      expect(router.mailboxAccountId, isNull);
+    });
+
+    test('malformed mailbox account context is retained as a route error', () {
+      final router = RouteUtils.parsingRouteParametersToNavigationRouter({
+        RouteUtils.paramContext: mailboxId.id.value,
+        RouteUtils.paramMailboxAccountId: 'invalid account',
+      });
+
+      expect(router.hasMalformedMailboxContext, isTrue);
+      expect(router.resolveMailboxIdentity(AccountId(Id('primary'))), isNull);
+    });
+
+    test('shared email route preserves mailbox account context', () {
+      final emailId = EmailId(Id('email-id'));
+      final uri = Uri.parse(RouteUtils.generateNavigationRoute(
+        AppRoutes.dashboard,
+        router: NavigationRouter(
+          emailId: emailId,
+          mailboxId: mailboxId,
+          mailboxAccountId: mailboxAccountId,
+        ),
+      ));
+      final router = RouteUtils.parsingRouteParametersToNavigationRouter({
+        RouteUtils.paramID: uri.pathSegments.last,
+        ...uri.queryParameters,
+      });
+
+      expect(router.emailId, emailId);
+      expect(router.mailboxId, mailboxId);
+      expect(router.mailboxAccountId, mailboxAccountId);
+    });
+
+    test('shared search-result email preserves mailbox account context', () {
+      final uri = Uri.parse(RouteUtils.generateNavigationRoute(
+        AppRoutes.dashboard,
+        router: NavigationRouter(
+          emailId: EmailId(Id('search-email')),
+          mailboxId: mailboxId,
+          mailboxAccountId: mailboxAccountId,
+          searchQuery: SearchQuery('query'),
+          dashboardType: DashboardType.search,
+        ),
+      ));
+      final router = RouteUtils.parsingRouteParametersToNavigationRouter({
+        RouteUtils.paramID: uri.pathSegments.last,
+        ...uri.queryParameters,
+      });
+
+      expect(router.dashboardType, DashboardType.search);
+      expect(router.mailboxId, mailboxId);
+      expect(router.mailboxAccountId, mailboxAccountId);
+    });
+
+    test('mailbox account participates in router equality', () {
+      expect(
+        NavigationRouter(
+          mailboxId: mailboxId,
+          mailboxAccountId: mailboxAccountId,
+        ),
+        isNot(NavigationRouter(
+          mailboxId: mailboxId,
+          mailboxAccountId: AccountId(Id('other-account')),
+        )),
+      );
+    });
+
+    test('programmatic mailbox account without mailbox is rejected', () {
+      expect(
+        () => NavigationRouter(mailboxAccountId: mailboxAccountId),
+        throwsArgumentError,
+      );
+    });
+
+    test('explicit mailbox account wins over primary account fallback', () {
+      final primaryAccountId = AccountId(Id('primary-account'));
+      final identity = NavigationRouter(
+        mailboxId: mailboxId,
+        mailboxAccountId: mailboxAccountId,
+      ).resolveMailboxIdentity(primaryAccountId);
+
+      expect(identity?.accountId, mailboxAccountId);
+      expect(identity?.mailboxId, mailboxId);
+    });
+
+    test('unknown explicit account never falls back to the primary account', () {
+      final primaryAccountId = AccountId(Id('primary-account'));
+      final unknownAccountId = AccountId(Id('unknown-account'));
+      final identity = NavigationRouter(
+        mailboxId: mailboxId,
+        mailboxAccountId: unknownAccountId,
+      ).resolveMailboxIdentity(primaryAccountId);
+
+      expect(identity?.accountId, unknownAccountId);
+      expect(identity?.accountId, isNot(primaryAccountId));
+    });
+
+    test('legacy mailbox route resolves only against the primary account', () {
+      final primaryAccountId = AccountId(Id('primary-account'));
+      final identity = NavigationRouter(
+        mailboxId: mailboxId,
+      ).resolveMailboxIdentity(primaryAccountId);
+
+      expect(identity?.accountId, primaryAccountId);
+      expect(identity?.mailboxId, mailboxId);
+    });
+
+    test('legacy mailbox route cannot resolve without a primary account', () {
+      final identity = NavigationRouter(
+        mailboxId: mailboxId,
+      ).resolveMailboxIdentity(null);
+
+      expect(identity, isNull);
+    });
+
+    test('shared mailbox without account cannot generate a legacy route', () {
+      final sharedMailbox = PresentationMailbox(
+        mailboxId,
+        isSharedAccount: true,
+      );
+
+      expect(
+        () => sharedMailbox.browserRouteMailboxAccountId,
+        throwsStateError,
+      );
+      expect(() => sharedMailbox.mailboxRouteWeb, throwsStateError);
+    });
+
+    test('personal mailbox with explicit primary account keeps legacy URL shape', () {
+      final personalMailbox = PresentationMailbox(
+        mailboxId,
+        accountId: AccountId(Id('primary-account')),
+      );
+
+      final uri = Uri.parse(RouteUtils.generateNavigationRoute(
+        AppRoutes.dashboard,
+        router: NavigationRouter(
+          mailboxId: personalMailbox.browserRouteMailboxId,
+          mailboxAccountId: personalMailbox.browserRouteMailboxAccountId,
+        ),
+      ));
+
+      expect(uri.queryParameters[RouteUtils.paramMailboxAccountId], isNull);
+    });
+  });
+
   group('parseMapMailtoFromUri test', () {
     test('should parse a valid mailto URI', () {
       const mailtoUri = 'mailto:test@example.com?subject=Hello';

@@ -26,12 +26,23 @@ class GetEmailByIdInteractor {
     {
       Properties? properties,
       PresentationMailbox? mailboxContain,
+      int? requestId,
     }
   ) async* {
     try {
-      yield Right<Failure, Success>(GetEmailByIdLoading());
+      yield Right<Failure, Success>(GetEmailByIdLoading(
+        requestedAccountId: accountId,
+        requestedEmailId: emailId,
+        requestId: requestId,
+      ));
       if (PlatformInfo.isMobile) {
-        yield* _getStoredEmail(session, accountId, emailId, properties: properties);
+        yield* _getStoredEmail(
+          session,
+          accountId,
+          emailId,
+          properties: properties,
+          requestId: requestId,
+        );
       } else {
         yield* _getEmailByIdFromServer(
           session,
@@ -39,11 +50,17 @@ class GetEmailByIdInteractor {
           emailId,
           properties: properties,
           mailboxContain: mailboxContain,
+          requestId: requestId,
         );
       }
     } catch (e) {
       logWarning('GetEmailByIdInteractor::execute():EXCEPTION: $e');
-      yield Left<Failure, Success>(GetEmailByIdFailure(e));
+      yield Left<Failure, Success>(GetEmailByIdFailure(
+        e,
+        requestedAccountId: accountId,
+        requestedEmailId: emailId,
+        requestId: requestId,
+      ));
     }
   }
 
@@ -54,16 +71,28 @@ class GetEmailByIdInteractor {
     {
       Properties? properties,
       PresentationMailbox? mailboxContain,
+      int? requestId,
     }
   ) async* {
     try {
       final email = await _threadRepository.getEmailById(session, accountId, emailId, properties: properties);
       yield Right<Failure, Success>(
-        GetEmailByIdSuccess(email, mailboxContain: mailboxContain)
+        GetEmailByIdSuccess(
+          email,
+          requestedAccountId: accountId,
+          requestedEmailId: emailId,
+          requestId: requestId,
+          mailboxContain: mailboxContain,
+        )
       );
     } catch (e) {
       logWarning('GetEmailByIdInteractor::_getEmailByIdFromServer():EXCEPTION: $e');
-      yield Left<Failure, Success>(GetEmailByIdFailure(e));
+      yield Left<Failure, Success>(GetEmailByIdFailure(
+        e,
+        requestedAccountId: accountId,
+        requestedEmailId: emailId,
+        requestId: requestId,
+      ));
     }
 
   }
@@ -74,14 +103,26 @@ class GetEmailByIdInteractor {
     EmailId emailId,
     {
       Properties? properties,
+      int? requestId,
     }
   ) async* {
     try {
       final email = await _emailRepository.getStoredEmail(session, accountId, emailId);
-      yield Right<Failure, Success>(GetEmailByIdSuccess(email.toPresentationEmail()));
+      yield Right<Failure, Success>(GetEmailByIdSuccess(
+        email.toPresentationEmail(),
+        requestedAccountId: accountId,
+        requestedEmailId: emailId,
+        requestId: requestId,
+      ));
     } catch (e) {
       logWarning('GetEmailByIdInteractor::_tryToGetEmailFromCache():EXCEPTION: $e');
-      yield* _getEmailByIdFromServer(session, accountId, emailId, properties: properties);
+      yield* _getEmailByIdFromServer(
+        session,
+        accountId,
+        emailId,
+        properties: properties,
+        requestId: requestId,
+      );
     }
   }
 }

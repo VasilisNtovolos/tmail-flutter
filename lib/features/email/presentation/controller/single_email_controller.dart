@@ -1129,6 +1129,9 @@ class SingleEmailController extends BaseController with AppLoaderMixin {
             mailboxId: isSearchRunning
               ? null
               : selectedMailbox?.browserRouteMailboxId,
+            mailboxAccountId: isSearchRunning
+              ? null
+              : selectedMailbox?.browserRouteMailboxAccountId,
             labelId: selectedMailbox?.labelId,
             dashboardType: isSearchRunning
               ? DashboardType.search

@@ -1,7 +1,10 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:core/data/network/config/dynamic_url_interceptors.dart';
 import 'package:core/presentation/resources/image_paths.dart';
+import 'package:core/presentation/state/failure.dart';
+import 'package:core/presentation/state/success.dart';
 import 'package:core/presentation/utils/app_toast.dart';
 import 'package:core/presentation/utils/responsive_utils.dart';
 import 'package:dartz/dartz.dart' hide State;
@@ -9,11 +12,16 @@ import 'package:flutter/widgets.dart' hide State;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:get/get.dart';
 import 'package:jmap_dart_client/jmap/account_id.dart';
+import 'package:jmap_dart_client/jmap/core/account/account.dart';
+import 'package:jmap_dart_client/jmap/core/capability/capability_identifier.dart';
+import 'package:jmap_dart_client/jmap/core/capability/mail_capability.dart';
 import 'package:jmap_dart_client/jmap/core/id.dart';
 import 'package:jmap_dart_client/jmap/core/utc_date.dart';
 import 'package:jmap_dart_client/jmap/core/session/session.dart';
 import 'package:jmap_dart_client/jmap/core/state.dart';
+import 'package:jmap_dart_client/jmap/core/unsigned_int.dart';
 import 'package:jmap_dart_client/jmap/core/user_name.dart';
+import 'package:jmap_dart_client/jmap/mail/email/email.dart';
 import 'package:jmap_dart_client/jmap/mail/email/email_address.dart';
 import 'package:jmap_dart_client/jmap/mail/mailbox/mailbox.dart';
 import 'package:mockito/annotations.dart';
@@ -70,6 +78,7 @@ import 'package:tmail_ui_user/features/mailbox/domain/usecases/subscribe_multipl
 import 'package:tmail_ui_user/features/mailbox/presentation/mailbox_controller.dart';
 import 'package:tmail_ui_user/features/mailbox/presentation/model/mailbox_tree_builder.dart';
 import 'package:tmail_ui_user/features/mailbox/presentation/model/mailbox_node.dart';
+import 'package:tmail_ui_user/features/mailbox/presentation/model/mailbox_collection.dart';
 import 'package:tmail_ui_user/features/mailbox/presentation/model/mailbox_tree.dart';
 import 'package:tmail_ui_user/features/mailbox_creator/domain/usecases/verify_name_interactor.dart';
 import 'package:tmail_ui_user/features/mailbox_dashboard/domain/usecases/get_all_recent_search_latest_interactor.dart';
@@ -82,6 +91,7 @@ import 'package:tmail_ui_user/features/mailbox_dashboard/domain/usecases/remove_
 import 'package:tmail_ui_user/features/mailbox_dashboard/domain/usecases/save_recent_search_interactor.dart';
 import 'package:tmail_ui_user/features/mailbox_dashboard/domain/usecases/store_email_sort_order_interactor.dart';
 import 'package:tmail_ui_user/features/mailbox_dashboard/presentation/action/download_ui_action.dart';
+import 'package:tmail_ui_user/features/mailbox_dashboard/presentation/action/dashboard_action.dart';
 import 'package:tmail_ui_user/features/mailbox_dashboard/presentation/controller/advanced_filter_controller.dart';
 import 'package:tmail_ui_user/features/mailbox_dashboard/presentation/controller/app_grid_dashboard_controller.dart';
 import 'package:tmail_ui_user/features/mailbox_dashboard/presentation/controller/mailbox_dashboard_controller.dart';
@@ -90,6 +100,10 @@ import 'package:tmail_ui_user/features/mailbox_dashboard/presentation/controller
 import 'package:tmail_ui_user/features/mailbox_dashboard/presentation/model/search/email_receive_time_type.dart';
 import 'package:tmail_ui_user/features/mailbox_dashboard/presentation/model/search/email_sort_order_type.dart';
 import 'package:tmail_ui_user/features/mailbox_dashboard/presentation/model/search/search_email_filter.dart';
+import 'package:tmail_ui_user/features/mailbox/domain/state/get_all_mailboxes_state.dart';
+import 'package:tmail_ui_user/main/routes/navigation_router.dart';
+import 'package:tmail_ui_user/main/routes/app_routes.dart';
+import 'package:tmail_ui_user/main/routes/route_utils.dart';
 import 'package:tmail_ui_user/features/manage_account/data/local/language_cache_manager.dart';
 import 'package:tmail_ui_user/features/manage_account/domain/usecases/get_all_identities_interactor.dart';
 import 'package:tmail_ui_user/features/manage_account/domain/usecases/log_out_oidc_interactor.dart';
@@ -328,6 +342,54 @@ void main() {
   final testMailboxId = MailboxId(Id('1'));
   final testAccountId = AccountId(Id('123'));
 
+  Session sessionWithSharedAccounts(Map<AccountId, bool> sharedAccounts) {
+    final mailCapability = MailCapability(
+      maxMailboxesPerEmail: UnsignedInt(100),
+      maxSizeAttachmentsPerEmail: UnsignedInt(100),
+      emailQuerySortOptions: const {},
+      mayCreateTopLevelMailbox: true,
+    );
+    final primaryCapabilities = {
+      CapabilityIdentifier.jmapMail: mailCapability,
+    };
+    return Session(
+      primaryCapabilities,
+      {
+        testAccountId: Account(
+          AccountName('Primary'),
+          true,
+          false,
+          primaryCapabilities,
+        ),
+        for (final entry in sharedAccounts.entries)
+          entry.key: Account(
+            AccountName('Shared'),
+            false,
+            false,
+            entry.value ? primaryCapabilities : {},
+          ),
+      },
+      {CapabilityIdentifier.jmapMail: testAccountId},
+      UserName('data'),
+      google,
+      google,
+      google,
+      google,
+      State('1'),
+    );
+  }
+
+  Session sessionWithSharedAccount(
+    AccountId sharedAccountId, {
+    bool supportsMail = true,
+  }) => sessionWithSharedAccounts({sharedAccountId: supportsMail});
+
+  Future<void> flushMailboxLoad() async {
+    for (var i = 0; i < 6; i++) {
+      await Future<void>.delayed(Duration.zero);
+    }
+  }
+
   setUp(() {
     Get.put<RemoveEmailDraftsInteractor>(removeEmailDraftsInteractor);
     Get.put<EmailReceiveManager>(emailReceiveManager);
@@ -418,6 +480,23 @@ void main() {
       Get.put(mailboxDashboardController);
       mailboxDashboardController.onReady();
 
+      final realTreeBuilder = TreeBuilder();
+      when(treeBuilder.generateMailboxTreeInUI(
+        allMailboxes: anyNamed('allMailboxes'),
+        currentCollection: anyNamed('currentCollection'),
+        mailboxIdSelected: anyNamed('mailboxIdSelected'),
+        mailboxIdExpanded: anyNamed('mailboxIdExpanded'),
+      )).thenAnswer((invocation) => realTreeBuilder.generateMailboxTreeInUI(
+        allMailboxes:
+            invocation.namedArguments[#allMailboxes] as List<PresentationMailbox>,
+        currentCollection:
+            invocation.namedArguments[#currentCollection] as MailboxCollection,
+        mailboxIdSelected:
+            invocation.namedArguments[#mailboxIdSelected] as MailboxId?,
+        mailboxIdExpanded:
+            invocation.namedArguments[#mailboxIdExpanded] as MailboxId?,
+      ));
+
       mailboxController = MailboxController(
         createNewMailboxInteractor,
         deleteMultipleMailboxInteractor,
@@ -432,6 +511,7 @@ void main() {
         verifyNameInteractor,
         getAllMailboxInteractor,
         refreshAllMailboxInteractor);
+      mailboxController.suppressBrowserHistoryForTesting = true;
       mailboxController.onReady();
 
       threadController = ThreadController(
@@ -542,6 +622,816 @@ void main() {
 
       expect(reconciled, refreshedSharedInbox);
       expect(reconciled, isNot(primaryInbox));
+    });
+
+    test('real shared loader rebuilds before marking loaded and retries route once', () async {
+      PlatformInfo.isTestingForWeb = true;
+      addTearDown(() => PlatformInfo.isTestingForWeb = false);
+      final duplicateId = MailboxId(Id('duplicate-route-mailbox'));
+      final sharedAccountId = AccountId(Id('shared-route-account'));
+      final primaryMailbox = PresentationMailbox(
+        duplicateId,
+        name: MailboxName('Primary'),
+      );
+      final sharedMailbox = PresentationMailbox(
+        duplicateId,
+        accountId: sharedAccountId,
+        isSharedAccount: true,
+        name: MailboxName('Shared'),
+      );
+      mailboxDashboardController.sessionCurrent =
+          sessionWithSharedAccount(sharedAccountId);
+      mailboxController.allMailboxes = [primaryMailbox];
+      final responseController =
+          StreamController<Either<Failure, Success>>();
+      addTearDown(responseController.close);
+      when(getAllMailboxInteractor.execute(
+        any,
+        sharedAccountId,
+        properties: anyNamed('properties'),
+      )).thenAnswer((_) => responseController.stream);
+      mailboxController.setNavigationRouterForTesting(NavigationRouter(
+        mailboxId: duplicateId,
+        mailboxAccountId: sharedAccountId,
+      ));
+
+      mailboxController.handleNavigationRouterForTesting();
+
+      expect(mailboxController.hasPendingNavigationRouter, isTrue);
+      expect(mailboxDashboardController.selectedMailbox.value, isNull);
+
+      mailboxController.scheduleSharedMailboxLoadForTesting();
+      await flushMailboxLoad();
+      verify(getAllMailboxInteractor.execute(
+        any,
+        sharedAccountId,
+        properties: anyNamed('properties'),
+      )).called(1);
+      responseController.add(Right(GetAllMailboxSuccess(
+        mailboxList: [sharedMailbox],
+        currentMailboxState: State('shared-state'),
+      )));
+      await flushMailboxLoad();
+      expect(
+        mailboxController.isSharedMailboxAccountLoadedForTesting(
+          sharedAccountId,
+        ),
+        isFalse,
+      );
+      expect(mailboxController.hasPendingNavigationRouter, isTrue);
+
+      await responseController.close();
+      await flushMailboxLoad();
+
+      expect(
+        mailboxController.findMailboxNodeByIdentity(
+          MailboxIdentity(sharedAccountId, duplicateId),
+        )?.item.accountId,
+        sharedAccountId,
+      );
+      expect(
+        mailboxController.isSharedMailboxAccountLoadedForTesting(
+          sharedAccountId,
+        ),
+        isTrue,
+      );
+      expect(mailboxController.hasPendingNavigationRouter, isFalse);
+      expect(mailboxDashboardController.selectedMailbox.value?.id, duplicateId);
+      expect(
+        mailboxDashboardController.selectedMailbox.value?.accountId,
+        sharedAccountId,
+      );
+    });
+
+    test('real shared loader dispatches a pending email route exactly once', () async {
+      PlatformInfo.isTestingForWeb = true;
+      addTearDown(() => PlatformInfo.isTestingForWeb = false);
+      final mailboxId = MailboxId(Id('shared-email-mailbox'));
+      final sharedAccountId = AccountId(Id('shared-email-account'));
+      final sharedMailbox = PresentationMailbox(
+        mailboxId,
+        accountId: sharedAccountId,
+        isSharedAccount: true,
+        name: MailboxName('Shared'),
+      );
+      mailboxDashboardController.sessionCurrent =
+          sessionWithSharedAccount(sharedAccountId);
+      final responseController =
+          StreamController<Either<Failure, Success>>();
+      addTearDown(responseController.close);
+      when(getAllMailboxInteractor.execute(
+        any,
+        sharedAccountId,
+        properties: anyNamed('properties'),
+      )).thenAnswer((_) => responseController.stream);
+      mailboxController.setNavigationRouterForTesting(NavigationRouter(
+        emailId: EmailId(Id('shared-email')),
+        mailboxId: mailboxId,
+        mailboxAccountId: sharedAccountId,
+      ));
+      final dispatchedActions = <Object?>[];
+      final actionWorker = ever(
+        mailboxDashboardController.dashBoardAction,
+        dispatchedActions.add,
+      );
+      addTearDown(actionWorker.dispose);
+
+      mailboxController.handleNavigationRouterForTesting();
+      expect(mailboxController.hasPendingNavigationRouter, isTrue);
+
+      mailboxController.scheduleSharedMailboxLoadForTesting();
+      await flushMailboxLoad();
+      responseController.add(Right(GetAllMailboxSuccess(
+        mailboxList: [sharedMailbox],
+        currentMailboxState: State('shared-email-state'),
+      )));
+      await responseController.close();
+      await flushMailboxLoad();
+
+      expect(mailboxController.hasPendingNavigationRouter, isFalse);
+      expect(mailboxDashboardController.selectedMailbox.value?.id, mailboxId);
+      expect(
+        mailboxDashboardController.selectedMailbox.value?.accountId,
+        sharedAccountId,
+      );
+      expect(
+        dispatchedActions.whereType<OpenEmailInsideMailboxFromLocationBar>(),
+        hasLength(1),
+      );
+    });
+
+    test('real shared loader treats loaded missing mailbox as unknown', () async {
+      PlatformInfo.isTestingForWeb = true;
+      addTearDown(() => PlatformInfo.isTestingForWeb = false);
+      final sharedAccountId = AccountId(Id('empty-shared-account'));
+      mailboxDashboardController.sessionCurrent =
+          sessionWithSharedAccount(sharedAccountId);
+      when(getAllMailboxInteractor.execute(
+        any,
+        sharedAccountId,
+        properties: anyNamed('properties'),
+      )).thenAnswer((_) => Stream.value(Right(GetAllMailboxSuccess(
+        mailboxList: const [],
+        currentMailboxState: State('empty-state'),
+      ))));
+      mailboxController.setNavigationRouterForTesting(NavigationRouter(
+        mailboxId: MailboxId(Id('missing-mailbox')),
+        mailboxAccountId: sharedAccountId,
+      ));
+
+      mailboxController.handleNavigationRouterForTesting();
+      expect(mailboxController.hasPendingNavigationRouter, isTrue);
+
+      mailboxController.scheduleSharedMailboxLoadForTesting();
+      await flushMailboxLoad();
+
+      expect(mailboxController.hasPendingNavigationRouter, isFalse);
+      expect(mailboxDashboardController.selectedMailbox.value, isNull);
+      expect(
+        mailboxController.lastNavigationRouteForTesting,
+        AppRoutes.unknownRoutePage,
+      );
+    });
+
+    test('completion without success stays retryable and multiple successes use the last result', () async {
+      final sharedAccountId = AccountId(Id('multiple-result-account'));
+      final firstMailbox = PresentationMailbox(
+        MailboxId(Id('first-result-mailbox')),
+        accountId: sharedAccountId,
+        isSharedAccount: true,
+      );
+      final finalMailbox = PresentationMailbox(
+        MailboxId(Id('final-result-mailbox')),
+        accountId: sharedAccountId,
+        isSharedAccount: true,
+      );
+      mailboxDashboardController.sessionCurrent =
+          sessionWithSharedAccount(sharedAccountId);
+      var invocation = 0;
+      when(getAllMailboxInteractor.execute(
+        any,
+        sharedAccountId,
+        properties: anyNamed('properties'),
+      )).thenAnswer((_) {
+        invocation++;
+        if (invocation == 1) {
+          return const Stream<Either<Failure, Success>>.empty();
+        }
+        return Stream.fromIterable([
+          Right(GetAllMailboxSuccess(
+            mailboxList: [firstMailbox],
+            currentMailboxState: State('first-result'),
+          )),
+          Right(GetAllMailboxSuccess(
+            mailboxList: [finalMailbox],
+            currentMailboxState: State('final-result'),
+          )),
+        ]);
+      });
+
+      mailboxController.scheduleSharedMailboxLoadForTesting();
+      await flushMailboxLoad();
+      expect(
+        mailboxController.isSharedMailboxAccountLoadedForTesting(
+          sharedAccountId,
+        ),
+        isFalse,
+      );
+      expect(mailboxDashboardController.mapMailboxByIdentity, isEmpty);
+
+      mailboxController.scheduleSharedMailboxLoadForTesting();
+      await flushMailboxLoad();
+
+      expect(invocation, 2);
+      expect(
+        mailboxDashboardController.mapMailboxByIdentity[
+          MailboxIdentity(sharedAccountId, firstMailbox.id)
+        ],
+        isNull,
+      );
+      expect(
+        mailboxDashboardController.mapMailboxByIdentity[
+          MailboxIdentity(sharedAccountId, finalMailbox.id)
+        ]?.id,
+        finalMailbox.id,
+      );
+    });
+
+    test('partial failure publishes nothing and a later schedule retries', () async {
+      PlatformInfo.isTestingForWeb = true;
+      addTearDown(() => PlatformInfo.isTestingForWeb = false);
+      final sharedAccountId = AccountId(Id('retry-shared-account'));
+      mailboxDashboardController.sessionCurrent =
+          sessionWithSharedAccount(sharedAccountId);
+      final mailbox = PresentationMailbox(
+        MailboxId(Id('retry-mailbox')),
+        accountId: sharedAccountId,
+        isSharedAccount: true,
+      );
+      final firstResponse = StreamController<Either<Failure, Success>>();
+      final secondResponse = StreamController<Either<Failure, Success>>();
+      addTearDown(firstResponse.close);
+      addTearDown(secondResponse.close);
+      var invocation = 0;
+      when(getAllMailboxInteractor.execute(
+        any,
+        sharedAccountId,
+        properties: anyNamed('properties'),
+      )).thenAnswer((_) => invocation++ == 0
+          ? firstResponse.stream
+          : secondResponse.stream);
+      mailboxController.setNavigationRouterForTesting(NavigationRouter(
+        mailboxId: MailboxId(Id('retry-mailbox')),
+        mailboxAccountId: sharedAccountId,
+      ));
+
+      mailboxController.handleNavigationRouterForTesting();
+      mailboxController.scheduleSharedMailboxLoadForTesting();
+      await flushMailboxLoad();
+      firstResponse.add(Right(GetAllMailboxSuccess(
+        mailboxList: [mailbox],
+        currentMailboxState: State('partial-state'),
+      )));
+      firstResponse.add(Left(GetAllMailboxFailure(Exception('failed'))));
+      await firstResponse.close();
+      await flushMailboxLoad();
+
+      expect(mailboxController.hasPendingNavigationRouter, isTrue);
+      expect(
+        mailboxController.findMailboxNodeByIdentity(
+          MailboxIdentity(sharedAccountId, mailbox.id),
+        ),
+        isNull,
+      );
+      expect(
+        mailboxController.isSharedMailboxAccountLoadedForTesting(
+          sharedAccountId,
+        ),
+        isFalse,
+      );
+
+      mailboxController.scheduleSharedMailboxLoadForTesting();
+      await flushMailboxLoad();
+      expect(invocation, 2);
+      secondResponse.add(Right(GetAllMailboxSuccess(
+        mailboxList: [mailbox],
+        currentMailboxState: State('retry-state'),
+      )));
+      await secondResponse.close();
+      await flushMailboxLoad();
+
+      expect(mailboxDashboardController.selectedMailbox.value?.id, mailbox.id);
+      expect(
+        mailboxDashboardController.selectedMailbox.value?.accountId,
+        sharedAccountId,
+      );
+      expect(mailboxController.hasPendingNavigationRouter, isFalse);
+    });
+
+    test('thrown account error is retryable and does not block another account', () async {
+      final accountA = AccountId(Id('throwing-account-a'));
+      final accountB = AccountId(Id('successful-account-b'));
+      final mailboxA = PresentationMailbox(
+        MailboxId(Id('mailbox-after-retry-a')),
+        accountId: accountA,
+        isSharedAccount: true,
+      );
+      final mailboxB = PresentationMailbox(
+        MailboxId(Id('mailbox-b-after-a-error')),
+        accountId: accountB,
+        isSharedAccount: true,
+      );
+      mailboxDashboardController.sessionCurrent = sessionWithSharedAccounts({
+        accountA: true,
+        accountB: true,
+      });
+      var accountAInvocations = 0;
+      when(getAllMailboxInteractor.execute(
+        any,
+        accountA,
+        properties: anyNamed('properties'),
+      )).thenAnswer((_) {
+        accountAInvocations++;
+        if (accountAInvocations == 1) {
+          return Stream<Either<Failure, Success>>.multi((controller) {
+            controller.add(Right(GetAllMailboxSuccess(
+              mailboxList: [mailboxA],
+              currentMailboxState: State('partial-a'),
+            )));
+            controller.addError(Exception('account A stream failed'));
+            controller.close();
+          });
+        }
+        return Stream.value(Right(GetAllMailboxSuccess(
+          mailboxList: [mailboxA],
+          currentMailboxState: State('retry-a'),
+        )));
+      });
+      when(getAllMailboxInteractor.execute(
+        any,
+        accountB,
+        properties: anyNamed('properties'),
+      )).thenAnswer((_) => Stream.value(Right(GetAllMailboxSuccess(
+        mailboxList: [mailboxB],
+        currentMailboxState: State('success-b'),
+      ))));
+
+      mailboxController.scheduleSharedMailboxLoadForTesting();
+      await flushMailboxLoad();
+
+      expect(accountAInvocations, 1);
+      expect(
+        mailboxDashboardController.mapMailboxByIdentity[
+          MailboxIdentity(accountA, mailboxA.id)
+        ],
+        isNull,
+      );
+      expect(
+        mailboxDashboardController.mapMailboxByIdentity[
+          MailboxIdentity(accountB, mailboxB.id)
+        ]?.id,
+        mailboxB.id,
+      );
+      expect(
+        mailboxController.isSharedMailboxAccountLoadedForTesting(accountA),
+        isFalse,
+      );
+      expect(
+        mailboxController.isSharedMailboxAccountLoadedForTesting(accountB),
+        isTrue,
+      );
+
+      mailboxController.scheduleSharedMailboxLoadForTesting();
+      await flushMailboxLoad();
+
+      expect(accountAInvocations, 2);
+      expect(
+        mailboxDashboardController.mapMailboxByIdentity[
+          MailboxIdentity(accountA, mailboxA.id)
+        ]?.id,
+        mailboxA.id,
+      );
+      expect(
+        mailboxDashboardController.mapMailboxByIdentity[
+          MailboxIdentity(accountB, mailboxB.id)
+        ]?.id,
+        mailboxB.id,
+      );
+    });
+
+    test('candidate build failure leaves source tree and maps unchanged', () async {
+      final sharedAccountId = AccountId(Id('candidate-failure-account'));
+      final primaryMailbox = PresentationMailbox(
+        MailboxId(Id('candidate-primary-mailbox')),
+        name: MailboxName('Primary'),
+      );
+      final sharedMailbox = PresentationMailbox(
+        MailboxId(Id('candidate-shared-mailbox')),
+        accountId: sharedAccountId,
+        isSharedAccount: true,
+      );
+      mailboxDashboardController.sessionCurrent =
+          sessionWithSharedAccount(sharedAccountId);
+      mailboxController.allMailboxes = [primaryMailbox];
+      mailboxController.setMapMailboxForTesting();
+      final originalDefaultTree = mailboxController.defaultMailboxTree.value;
+      final originalPersonalTree = mailboxController.personalMailboxTree.value;
+      final originalTeamTree = mailboxController.teamMailboxesTree.value;
+      when(treeBuilder.generateMailboxTreeInUI(
+        allMailboxes: anyNamed('allMailboxes'),
+        currentCollection: anyNamed('currentCollection'),
+        mailboxIdSelected: anyNamed('mailboxIdSelected'),
+        mailboxIdExpanded: anyNamed('mailboxIdExpanded'),
+      )).thenThrow(Exception('candidate build failed'));
+      when(getAllMailboxInteractor.execute(
+        any,
+        sharedAccountId,
+        properties: anyNamed('properties'),
+      )).thenAnswer((_) => Stream.value(Right(GetAllMailboxSuccess(
+        mailboxList: [sharedMailbox],
+        currentMailboxState: State('candidate-failure'),
+      ))));
+
+      mailboxController.scheduleSharedMailboxLoadForTesting();
+      await flushMailboxLoad();
+
+      expect(mailboxController.allMailboxes, [primaryMailbox]);
+      expect(mailboxController.defaultMailboxTree.value, same(originalDefaultTree));
+      expect(mailboxController.personalMailboxTree.value, same(originalPersonalTree));
+      expect(mailboxController.teamMailboxesTree.value, same(originalTeamTree));
+      expect(
+        mailboxDashboardController.mapMailboxByIdentity.keys,
+        [MailboxIdentity(testAccountId, primaryMailbox.id)],
+      );
+      expect(mailboxDashboardController.mapMailboxById[primaryMailbox.id], primaryMailbox);
+      expect(
+        mailboxController.isSharedMailboxAccountLoadedForTesting(
+          sharedAccountId,
+        ),
+        isFalse,
+      );
+    });
+
+    test('session replacement during candidate build publishes nothing', () async {
+      final sharedAccountId = AccountId(Id('candidate-session-account'));
+      final sharedMailbox = PresentationMailbox(
+        MailboxId(Id('candidate-session-mailbox')),
+        accountId: sharedAccountId,
+        isSharedAccount: true,
+      );
+      mailboxDashboardController.sessionCurrent =
+          sessionWithSharedAccount(sharedAccountId);
+      final candidateCompleter = Completer<MailboxCollection>();
+      when(treeBuilder.generateMailboxTreeInUI(
+        allMailboxes: anyNamed('allMailboxes'),
+        currentCollection: anyNamed('currentCollection'),
+        mailboxIdSelected: anyNamed('mailboxIdSelected'),
+        mailboxIdExpanded: anyNamed('mailboxIdExpanded'),
+      )).thenAnswer((_) => candidateCompleter.future);
+      when(getAllMailboxInteractor.execute(
+        any,
+        sharedAccountId,
+        properties: anyNamed('properties'),
+      )).thenAnswer((_) => Stream.value(Right(GetAllMailboxSuccess(
+        mailboxList: [sharedMailbox],
+        currentMailboxState: State('candidate-session'),
+      ))));
+
+      mailboxController.scheduleSharedMailboxLoadForTesting();
+      await flushMailboxLoad();
+      mailboxDashboardController.sessionCurrent =
+          sessionWithSharedAccount(sharedAccountId);
+      candidateCompleter.complete(MailboxCollection(
+        allMailboxes: [sharedMailbox],
+        defaultTree: MailboxTree(MailboxNode.root()),
+        personalTree: MailboxTree(MailboxNode.root()),
+        teamMailboxTree: MailboxTree(
+          MailboxNode.root()..childrenItems = [MailboxNode(sharedMailbox)],
+        ),
+      ));
+      await flushMailboxLoad();
+
+      expect(mailboxController.allMailboxes, isEmpty);
+      expect(mailboxDashboardController.mapMailboxByIdentity, isEmpty);
+      expect(mailboxDashboardController.mapMailboxById, isEmpty);
+      expect(
+        mailboxController.isSharedMailboxAccountLoadedForTesting(
+          sharedAccountId,
+        ),
+        isFalse,
+      );
+    });
+
+    test('obsolete cleanup cannot remove a registered replacement operation', () async {
+      final sharedAccountId = AccountId(Id('replacement-operation-account'));
+      final mailbox = PresentationMailbox(
+        MailboxId(Id('replacement-operation-mailbox')),
+        accountId: sharedAccountId,
+        isSharedAccount: true,
+      );
+      final oldSession = sessionWithSharedAccount(sharedAccountId);
+      final newSession = sessionWithSharedAccount(sharedAccountId);
+      mailboxDashboardController.sessionCurrent = oldSession;
+      final oldResponse = StreamController<Either<Failure, Success>>();
+      final newResponse = StreamController<Either<Failure, Success>>();
+      addTearDown(oldResponse.close);
+      addTearDown(newResponse.close);
+      when(getAllMailboxInteractor.execute(
+        any,
+        sharedAccountId,
+        properties: anyNamed('properties'),
+      )).thenAnswer((invocation) => identical(
+            invocation.positionalArguments.first,
+            oldSession,
+          )
+          ? oldResponse.stream
+          : newResponse.stream);
+
+      mailboxController.scheduleSharedMailboxLoadForTesting();
+      await flushMailboxLoad();
+      mailboxDashboardController.sessionCurrent = newSession;
+      mailboxController.scheduleSharedMailboxLoadForTesting();
+      await flushMailboxLoad();
+      await oldResponse.close();
+      await flushMailboxLoad();
+
+      newResponse.add(Right(GetAllMailboxSuccess(
+        mailboxList: [mailbox],
+        currentMailboxState: State('replacement-operation'),
+      )));
+      await newResponse.close();
+      await flushMailboxLoad();
+
+      final invokedSessions = verify(getAllMailboxInteractor.execute(
+        captureAny,
+        sharedAccountId,
+        properties: anyNamed('properties'),
+      )).captured;
+      expect(invokedSessions.where((value) => identical(value, oldSession)), hasLength(1));
+      expect(invokedSessions.where((value) => identical(value, newSession)), hasLength(1));
+      expect(
+        mailboxDashboardController.mapMailboxByIdentity[
+          MailboxIdentity(sharedAccountId, mailbox.id)
+        ]?.id,
+        mailbox.id,
+      );
+      expect(
+        mailboxController.isSharedMailboxAccountLoadedForTesting(
+          sharedAccountId,
+        ),
+        isTrue,
+      );
+    });
+
+    test('session replacement invalidates a pending shared route', () {
+      PlatformInfo.isTestingForWeb = true;
+      addTearDown(() => PlatformInfo.isTestingForWeb = false);
+      final sharedAccountId = AccountId(Id('stale-shared-account'));
+      mailboxDashboardController.sessionCurrent =
+          sessionWithSharedAccount(sharedAccountId);
+      mailboxController.setNavigationRouterForTesting(NavigationRouter(
+        mailboxId: MailboxId(Id('stale-mailbox')),
+        mailboxAccountId: sharedAccountId,
+      ));
+      mailboxController.handleNavigationRouterForTesting();
+      expect(mailboxController.hasPendingNavigationRouter, isTrue);
+
+      mailboxDashboardController.sessionCurrent =
+          sessionWithSharedAccount(sharedAccountId);
+      mailboxController.handleNavigationRouterForTesting();
+
+      expect(mailboxController.hasPendingNavigationRouter, isFalse);
+      expect(mailboxDashboardController.selectedMailbox.value, isNull);
+    });
+
+    test('obsolete shared completion does not publish or clear newer navigation', () async {
+      PlatformInfo.isTestingForWeb = true;
+      addTearDown(() => PlatformInfo.isTestingForWeb = false);
+      final sharedAccountId = AccountId(Id('old-shared-account'));
+      final primaryMailbox = PresentationMailbox(
+        MailboxId(Id('new-primary-mailbox')),
+        name: MailboxName('Primary'),
+      );
+      mailboxDashboardController.sessionCurrent =
+          sessionWithSharedAccount(sharedAccountId);
+      final oldSession = mailboxDashboardController.sessionCurrent!;
+      final oldResponse = StreamController<Either<Failure, Success>>();
+      addTearDown(oldResponse.close);
+      when(getAllMailboxInteractor.execute(
+        oldSession,
+        sharedAccountId,
+        properties: anyNamed('properties'),
+      )).thenAnswer((_) => oldResponse.stream);
+      mailboxController.defaultMailboxTree.value = MailboxTree(
+        MailboxNode.root()..childrenItems = [MailboxNode(primaryMailbox)],
+      );
+      mailboxController.setNavigationRouterForTesting(NavigationRouter(
+        mailboxId: MailboxId(Id('old-mailbox')),
+        mailboxAccountId: sharedAccountId,
+      ));
+      mailboxController.handleNavigationRouterForTesting();
+      mailboxController.scheduleSharedMailboxLoadForTesting();
+      await flushMailboxLoad();
+
+      mailboxDashboardController.sessionCurrent =
+          sessionWithSharedAccount(sharedAccountId);
+      mailboxController.setNavigationRouterForTesting(NavigationRouter(
+        mailboxId: primaryMailbox.id,
+      ));
+      oldResponse.add(Right(GetAllMailboxSuccess(
+        mailboxList: [PresentationMailbox(
+          MailboxId(Id('old-mailbox')),
+          accountId: sharedAccountId,
+          isSharedAccount: true,
+        )],
+        currentMailboxState: State('obsolete-state'),
+      )));
+      await oldResponse.close();
+      await flushMailboxLoad();
+      mailboxController.handleNavigationRouterForTesting();
+
+      expect(mailboxDashboardController.selectedMailbox.value, primaryMailbox);
+      expect(mailboxController.hasPendingNavigationRouter, isFalse);
+      expect(
+        mailboxController.findMailboxNodeByIdentity(MailboxIdentity(
+          sharedAccountId,
+          MailboxId(Id('old-mailbox')),
+        )),
+        isNull,
+      );
+    });
+
+    test('account A completion leaves account B route pending', () async {
+      PlatformInfo.isTestingForWeb = true;
+      addTearDown(() => PlatformInfo.isTestingForWeb = false);
+      final accountA = AccountId(Id('shared-a'));
+      final accountB = AccountId(Id('shared-b'));
+      final mailboxA = PresentationMailbox(
+        MailboxId(Id('mailbox-a')),
+        accountId: accountA,
+        isSharedAccount: true,
+      );
+      final mailboxB = PresentationMailbox(
+        MailboxId(Id('mailbox-b')),
+        accountId: accountB,
+        isSharedAccount: true,
+      );
+      mailboxDashboardController.sessionCurrent = sessionWithSharedAccounts({
+        accountA: true,
+        accountB: true,
+      });
+      final responseA = StreamController<Either<Failure, Success>>();
+      final responseB = StreamController<Either<Failure, Success>>();
+      addTearDown(responseA.close);
+      addTearDown(responseB.close);
+      when(getAllMailboxInteractor.execute(
+        any,
+        accountA,
+        properties: anyNamed('properties'),
+      )).thenAnswer((_) => responseA.stream);
+      when(getAllMailboxInteractor.execute(
+        any,
+        accountB,
+        properties: anyNamed('properties'),
+      )).thenAnswer((_) => responseB.stream);
+      mailboxController.setNavigationRouterForTesting(NavigationRouter(
+        mailboxId: mailboxB.id,
+        mailboxAccountId: accountB,
+      ));
+      mailboxController.handleNavigationRouterForTesting();
+      mailboxController.scheduleSharedMailboxLoadForTesting();
+      await flushMailboxLoad();
+
+      responseA.add(Right(GetAllMailboxSuccess(
+        mailboxList: [mailboxA],
+        currentMailboxState: State('state-a'),
+      )));
+      await responseA.close();
+      await flushMailboxLoad();
+
+      expect(mailboxController.hasPendingNavigationRouter, isTrue);
+      expect(mailboxDashboardController.selectedMailbox.value, isNull);
+
+      responseB.add(Right(GetAllMailboxSuccess(
+        mailboxList: [mailboxB],
+        currentMailboxState: State('state-b'),
+      )));
+      await responseB.close();
+      await flushMailboxLoad();
+
+      expect(mailboxDashboardController.selectedMailbox.value?.id, mailboxB.id);
+      expect(
+        mailboxDashboardController.selectedMailbox.value?.accountId,
+        accountB,
+      );
+      expect(mailboxController.hasPendingNavigationRouter, isFalse);
+    });
+
+    test('unavailable and mail-incapable explicit accounts are rejected', () {
+      PlatformInfo.isTestingForWeb = true;
+      addTearDown(() => PlatformInfo.isTestingForWeb = false);
+      final unavailableAccountId = AccountId(Id('unavailable-account'));
+      mailboxDashboardController.sessionCurrent = testSession;
+      mailboxController.setNavigationRouterForTesting(NavigationRouter(
+        mailboxId: MailboxId(Id('mailbox')),
+        mailboxAccountId: unavailableAccountId,
+      ));
+      mailboxController.handleNavigationRouterForTesting();
+      expect(mailboxController.hasPendingNavigationRouter, isFalse);
+
+      final incapableAccountId = AccountId(Id('incapable-account'));
+      mailboxDashboardController.sessionCurrent = sessionWithSharedAccount(
+        incapableAccountId,
+        supportsMail: false,
+      );
+      mailboxController.setNavigationRouterForTesting(NavigationRouter(
+        mailboxId: MailboxId(Id('mailbox')),
+        mailboxAccountId: incapableAccountId,
+      ));
+      mailboxController.handleNavigationRouterForTesting();
+      expect(mailboxController.hasPendingNavigationRouter, isFalse);
+    });
+
+    test('synthetic shared root is rejected through the real loader', () async {
+      PlatformInfo.isTestingForWeb = true;
+      addTearDown(() => PlatformInfo.isTestingForWeb = false);
+      final sharedAccountId = AccountId(Id('root-shared-account'));
+      final root = PresentationMailbox(
+        MailboxId(Id('shared-root')),
+        accountId: sharedAccountId,
+        isSharedAccount: true,
+        isSharedAccountRoot: true,
+      );
+      mailboxDashboardController.sessionCurrent =
+          sessionWithSharedAccount(sharedAccountId);
+      when(getAllMailboxInteractor.execute(
+        any,
+        sharedAccountId,
+        properties: anyNamed('properties'),
+      )).thenAnswer((_) => Stream.value(Right(GetAllMailboxSuccess(
+        mailboxList: [root],
+        currentMailboxState: State('root-state'),
+      ))));
+      mailboxController.setNavigationRouterForTesting(NavigationRouter(
+        mailboxId: root.id,
+        mailboxAccountId: sharedAccountId,
+      ));
+
+      mailboxController.handleNavigationRouterForTesting();
+      mailboxController.scheduleSharedMailboxLoadForTesting();
+      await flushMailboxLoad();
+
+      expect(mailboxController.hasPendingNavigationRouter, isFalse);
+      expect(mailboxDashboardController.selectedMailbox.value, isNull);
+      expect(
+        mailboxController.lastNavigationRouteForTesting,
+        AppRoutes.unknownRoutePage,
+      );
+    });
+
+    test('conflicting label and mailbox account routes reach unknown only', () {
+      PlatformInfo.isTestingForWeb = true;
+      addTearDown(() => PlatformInfo.isTestingForWeb = false);
+      final accountId = AccountId(Id('label-account'));
+      mailboxDashboardController.sessionCurrent =
+          sessionWithSharedAccount(accountId);
+      final actions = <Object?>[];
+      final actionWorker = ever(
+        mailboxDashboardController.dashBoardAction,
+        actions.add,
+      );
+      addTearDown(actionWorker.dispose);
+
+      for (final parameters in [
+        {
+          RouteUtils.paramLabelId: 'label-id',
+          RouteUtils.paramMailboxAccountId: accountId.id.value,
+        },
+        {
+          RouteUtils.paramLabelId: 'label-id',
+          RouteUtils.paramContext: 'mailbox-id',
+          RouteUtils.paramMailboxAccountId: accountId.id.value,
+        },
+      ]) {
+        final router =
+            RouteUtils.parsingRouteParametersToNavigationRouter(parameters);
+        expect(router.hasMalformedMailboxContext, isTrue);
+        mailboxController.setNavigationRouterForTesting(router);
+        mailboxController.handleNavigationRouterForTesting();
+        expect(mailboxController.hasPendingNavigationRouter, isFalse);
+        expect(
+          mailboxController.lastNavigationRouteForTesting,
+          AppRoutes.unknownRoutePage,
+        );
+      }
+
+      expect(
+        actions.where((action) =>
+            action is OpenEmailInsideMailboxFromLocationBar ||
+            action is OpenEmailSearchedFromLocationBar ||
+            action is SearchEmailFromLocationBar),
+        isEmpty,
+      );
     });
 
     test('account-scoped map removal preserves colliding accounts', () {

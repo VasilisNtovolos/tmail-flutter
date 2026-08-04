@@ -1,6 +1,7 @@
 
 import 'package:core/presentation/resources/image_paths.dart';
 import 'package:flutter/material.dart';
+import 'package:jmap_dart_client/jmap/account_id.dart';
 import 'package:jmap_dart_client/jmap/core/id.dart';
 import 'package:jmap_dart_client/jmap/mail/email/keyword_identifier.dart';
 import 'package:jmap_dart_client/jmap/mail/mailbox/mailbox.dart';
@@ -77,7 +78,10 @@ extension PresentationMailboxExtension on PresentationMailbox {
 
   Uri get mailboxRouteWeb => RouteUtils.createUrlWebLocationBar(
     AppRoutes.dashboard,
-    router: NavigationRouter(mailboxId: id)
+    router: NavigationRouter(
+      mailboxId: id,
+      mailboxAccountId: browserRouteMailboxAccountId,
+    )
   );
 
   String? get filterKeyword {
@@ -102,6 +106,20 @@ extension PresentationMailboxExtension on PresentationMailbox {
       isLabelMailbox ? (this as PresentationLabelMailbox).label.id : null;
 
   MailboxId? get browserRouteMailboxId => isLabelMailbox ? null : mailboxId;
+
+  AccountId? get browserRouteMailboxAccountId {
+    if (browserRouteMailboxId == null || !isSharedAccount) {
+      return null;
+    }
+    if (isSharedAccountRoot) return null;
+    final sharedMailboxAccountId = accountId;
+    if (sharedMailboxAccountId == null) {
+      throw StateError('A shared mailbox route requires an account ID.');
+    }
+    return sharedMailboxAccountId;
+  }
+
+  bool get isOpenableMailboxRoute => !isSharedAccountRoot;
 
   bool get isAllEmailTrashAndSpamFolder => id == PresentationMailbox.allEmailTrashAndSpamFolder.id;
 

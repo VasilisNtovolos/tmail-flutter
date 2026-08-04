@@ -958,6 +958,7 @@ class SearchEmailController extends BaseController
           AppRoutes.dashboard,
           router: NavigationRouter(
             mailboxId: currentMailbox?.browserRouteMailboxId,
+            mailboxAccountId: currentMailbox?.browserRouteMailboxAccountId,
             labelId: currentMailbox?.labelId,
             dashboardType: DashboardType.normal
           )

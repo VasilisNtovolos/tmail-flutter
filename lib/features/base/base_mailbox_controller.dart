@@ -110,8 +110,21 @@ abstract class BaseMailboxController extends BaseController
     MailboxId? mailboxIdSelected,
     OnUpdateMailboxCollectionCallback? onUpdateMailboxCollectionCallback,
   }) async {
-    MailboxCollection mailboxCollection =
-        await _treeBuilder.generateMailboxTreeInUI(
+    final mailboxCollection = await prepareMailboxTree(
+      allMailbox,
+      mailboxIdSelected: mailboxIdSelected,
+      onUpdateMailboxCollectionCallback: onUpdateMailboxCollectionCallback,
+    );
+
+    updateMailboxTree(mailboxCollection: mailboxCollection);
+  }
+
+  Future<MailboxCollection> prepareMailboxTree(
+    List<PresentationMailbox> allMailbox, {
+    MailboxId? mailboxIdSelected,
+    OnUpdateMailboxCollectionCallback? onUpdateMailboxCollectionCallback,
+  }) async {
+    MailboxCollection mailboxCollection = await _treeBuilder.generateMailboxTreeInUI(
       allMailboxes: allMailbox,
       currentCollection: currentMailboxCollection,
       mailboxIdSelected: mailboxIdSelected,
@@ -121,15 +134,26 @@ abstract class BaseMailboxController extends BaseController
       mailboxCollection = onUpdateMailboxCollectionCallback(mailboxCollection);
     }
 
-    updateMailboxTree(mailboxCollection: mailboxCollection);
+    return mailboxCollection;
   }
 
   Future<void> refreshTree(
     List<PresentationMailbox> allMailbox, {
     OnUpdateMailboxCollectionCallback? onUpdateMailboxCollectionCallback,
   }) async {
-    MailboxCollection mailboxCollection =
-        await _treeBuilder.generateMailboxTreeInUIAfterRefreshChanges(
+    final mailboxCollection = await prepareMailboxTreeAfterRefresh(
+      allMailbox,
+      onUpdateMailboxCollectionCallback: onUpdateMailboxCollectionCallback,
+    );
+
+    updateMailboxTree(mailboxCollection: mailboxCollection);
+  }
+
+  Future<MailboxCollection> prepareMailboxTreeAfterRefresh(
+    List<PresentationMailbox> allMailbox, {
+    OnUpdateMailboxCollectionCallback? onUpdateMailboxCollectionCallback,
+  }) async {
+    MailboxCollection mailboxCollection = await _treeBuilder.generateMailboxTreeInUIAfterRefreshChanges(
       allMailboxes: allMailbox,
       currentCollection: currentMailboxCollection,
     );
@@ -138,7 +162,7 @@ abstract class BaseMailboxController extends BaseController
       mailboxCollection = onUpdateMailboxCollectionCallback(mailboxCollection);
     }
 
-    updateMailboxTree(mailboxCollection: mailboxCollection);
+    return mailboxCollection;
   }
 
   void updateMailboxTree({

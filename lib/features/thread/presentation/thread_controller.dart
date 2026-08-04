@@ -9,6 +9,7 @@ import 'package:dartz/dartz.dart';
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 import 'package:jmap_dart_client/jmap/account_id.dart';
+import 'package:jmap_dart_client/jmap/core/capability/capability_identifier.dart';
 import 'package:jmap_dart_client/jmap/core/session/session.dart';
 import 'package:jmap_dart_client/jmap/core/state.dart' as jmap;
 import 'package:jmap_dart_client/jmap/core/unsigned_int.dart';
@@ -79,6 +80,7 @@ import 'package:tmail_ui_user/features/thread/presentation/model/loading_more_st
 import 'package:tmail_ui_user/features/thread/presentation/model/mail_list_shortcut_action_view_event.dart';
 import 'package:tmail_ui_user/features/thread/presentation/model/search_status.dart';
 import 'package:tmail_ui_user/main/exceptions/remote/method_level_exception.dart';
+import 'package:tmail_ui_user/main/error/capability_validator.dart';
 import 'package:tmail_ui_user/main/routes/app_routes.dart';
 import 'package:tmail_ui_user/main/routes/navigation_router.dart';
 import 'package:tmail_ui_user/main/routes/route_navigation.dart';
@@ -88,6 +90,27 @@ import 'package:universal_html/html.dart' as html;
 
 typedef StartRangeSelection = int;
 typedef EndRangeSelection = int;
+typedef LocationBarUrlBuilder = Uri Function(
+  String route,
+  NavigationRouter router,
+);
+typedef LocationBarNavigator = void Function(String route);
+
+class _LocationBarEmailRequest {
+  final int id;
+  final Session session;
+  final AccountId dashboardAccountId;
+  final AccountId requestedAccountId;
+  final EmailId requestedEmailId;
+
+  const _LocationBarEmailRequest({
+    required this.id,
+    required this.session,
+    required this.dashboardAccountId,
+    required this.requestedAccountId,
+    required this.requestedEmailId,
+  });
+}
 
 class ThreadController extends BaseController with EmailActionController {
 
@@ -100,6 +123,8 @@ class ThreadController extends BaseController with EmailActionController {
   final SearchMoreEmailInteractor _searchMoreEmailInteractor;
   final GetEmailByIdInteractor _getEmailByIdInteractor;
   final CleanAndGetEmailsInMailboxInteractor cleanAndGetEmailsInMailboxInteractor;
+  final LocationBarUrlBuilder _locationBarUrlBuilder;
+  final LocationBarNavigator _locationBarNavigator;
 
   final listEmailDrag = <PresentationEmail>[].obs;
   bool rangeSelectionMode = false;
@@ -111,6 +136,8 @@ class ThreadController extends BaseController with EmailActionController {
   MailboxId? _currentMemoryMailboxId;
   AccountId? _currentMemoryAccountId;
   int _peakEmailCount = 0;
+  int _locationBarEmailRequestId = 0;
+  _LocationBarEmailRequest? _activeLocationBarEmailRequest;
   final ScrollController listEmailController = ScrollController();
   final latestEmailSelectedOrUnselected = Rxn<PresentationEmail>();
   @visibleForTesting
@@ -162,7 +189,16 @@ class ThreadController extends BaseController with EmailActionController {
     this._searchMoreEmailInteractor,
     this._getEmailByIdInteractor,
     this.cleanAndGetEmailsInMailboxInteractor,
-  );
+    {
+      LocationBarUrlBuilder? locationBarUrlBuilder,
+      LocationBarNavigator? locationBarNavigator,
+    }
+  ) : _locationBarUrlBuilder = locationBarUrlBuilder ??
+      ((route, router) => RouteUtils.createUrlWebLocationBar(
+        route,
+        router: router,
+      )),
+      _locationBarNavigator = locationBarNavigator ?? popAndPush;
 
   @override
   void onInit() {
@@ -183,6 +219,7 @@ class ThreadController extends BaseController with EmailActionController {
 
   @override
   void onClose() {
+    _invalidateLocationBarEmailRequest();
     _currentMemoryMailboxId = null;
     _currentMemoryAccountId = null;
     listEmailController.dispose();
@@ -196,7 +233,19 @@ class ThreadController extends BaseController with EmailActionController {
   }
 
   @override
+  void clearState() {
+    _invalidateLocationBarEmailRequest();
+    super.clearState();
+  }
+
+  @override
   void handleSuccessViewState(Success success) {
+    if (success is GetEmailByIdRequestState &&
+        !_isCurrentLocationBarEmailState(
+          success as GetEmailByIdRequestState,
+        )) {
+      return;
+    }
     super.handleSuccessViewState(success);
     if (success is GetAllEmailSuccess) {
       _getAllEmailSuccess(success);
@@ -211,6 +260,9 @@ class ThreadController extends BaseController with EmailActionController {
     } else if (success is GetEmailByIdLoading) {
       openingEmail.value = true;
     } else if (success is GetEmailByIdSuccess) {
+      if (success.requestId != null) {
+        _activeLocationBarEmailRequest = null;
+      }
       openingEmail.value = false;
       if (isSearchActive) {
         _openEmailSearchedFromLocationBar(
@@ -229,6 +281,15 @@ class ThreadController extends BaseController with EmailActionController {
 
   @override
   void handleFailureViewState(Failure failure) {
+    if (failure is GetEmailByIdRequestState &&
+        !_isCurrentLocationBarEmailState(
+          failure as GetEmailByIdRequestState,
+        )) {
+      return;
+    }
+    if (failure is GetEmailByIdFailure && failure.requestId != null) {
+      _activeLocationBarEmailRequest = null;
+    }
     super.handleFailureViewState(failure);
     if (failure is SearchEmailFailure) {
       mailboxDashBoardController.updateRefreshAllEmailState(Left(RefreshAllEmailFailure()));
@@ -244,7 +305,7 @@ class ThreadController extends BaseController with EmailActionController {
       canLoadMore = true;
     } else if (failure is GetEmailByIdFailure) {
       openingEmail.value = false;
-      popAndPush(AppRoutes.unknownRoutePage);
+      _locationBarNavigator(AppRoutes.unknownRoutePage);
     } else if (failure is GetAllEmailFailure || failure is CleanAndGetAllEmailFailure) {
       mailboxDashBoardController.updateRefreshAllEmailState(Left(RefreshAllEmailFailure()));
     }
@@ -297,6 +358,7 @@ class ThreadController extends BaseController with EmailActionController {
 
   void _registerObxStreamListener() {
     ever(mailboxDashBoardController.selectedMailbox, (mailbox) {
+      _invalidateLocationBarEmailRequest();
       log('ThreadController::_registerObxStreamListener:SelectedMailbox: ${mailbox?.id} - ${mailbox?.name} | CurrentMemoryMailboxId: $_currentMemoryMailboxId');
       final mailboxAccountId = mailbox is PresentationMailbox
           ? mailbox.accountId ?? mailboxDashBoardController.accountId.value
@@ -320,6 +382,10 @@ class ThreadController extends BaseController with EmailActionController {
       }
     });
 
+    ever(mailboxDashBoardController.accountId, (_) {
+      _invalidateLocationBarEmailRequest();
+    });
+
     ever(searchController.searchState, (searchState) {
       if (searchState.searchStatus == SearchStatus.ACTIVE) {
         cancelSelectEmail();
@@ -337,9 +403,11 @@ class ThreadController extends BaseController with EmailActionController {
         filterMessagesAction(action.option);
         mailboxDashBoardController.clearDashBoardAction();
       } else if (action is HandleEmailActionTypeAction) {
+        _invalidateLocationBarEmailRequest();
         pressEmailSelectionAction(action.emailAction, action.listEmailSelected);
         mailboxDashBoardController.clearDashBoardAction();
       } else if (action is OpenEmailDetailedFromSuggestionQuickSearchAction) {
+        _invalidateLocationBarEmailRequest();
         final mailboxContain = action.presentationEmail.findMailboxContain(mailboxDashBoardController.mapMailboxById);
         final newEmail = generateEmailByPlatform(action.presentationEmail);
         handleEmailActionType(
@@ -350,6 +418,7 @@ class ThreadController extends BaseController with EmailActionController {
         mailboxDashBoardController.clearDashBoardAction();
       } else if (action is StartSearchEmailAction
           || action is ClearAdvancedSearchFilterEmailAction) {
+        _invalidateLocationBarEmailRequest();
         cancelSelectEmail();
         _replaceBrowserHistory();
         _searchEmail();
@@ -369,9 +438,11 @@ class ThreadController extends BaseController with EmailActionController {
       } else if (action is OpenEmailSearchedFromLocationBar) {
         _handleOpenEmailSearchedFromLocationBar(
           emailId: action.emailId,
-          searchQuery: action.searchQuery
+          searchQuery: action.searchQuery,
+          originatingAccountId: action.originatingAccountId,
         );
       } else if (action is SearchEmailFromLocationBar) {
+        _invalidateLocationBarEmailRequest();
         _handleSearchEmailFromLocationBar(action.searchQuery);
       } else if (action is SelectDateRangeToAdvancedSearch) {
         if (listEmailController.hasClients) {
@@ -1551,6 +1622,9 @@ class ThreadController extends BaseController with EmailActionController {
           mailboxId: isSearchActive
             ? currentEmail.mailboxContain?.mailboxId
             : selectedMailboxId,
+          mailboxAccountId: isSearchActive
+            ? currentEmail.mailboxContain?.browserRouteMailboxAccountId
+            : selectedMailbox?.browserRouteMailboxAccountId,
           searchQuery: isSearchActive
             ? searchQuery
             : null,
@@ -1570,34 +1644,90 @@ class ThreadController extends BaseController with EmailActionController {
     EmailId emailId,
     {
       PresentationMailbox? mailboxContain,
+      AccountId? originatingAccountId,
     }
   ) {
-    if (_session != null && _accountId != null) {
+    final effectiveAccountId = originatingAccountId ?? _accountId;
+    final currentSession = _session;
+    final currentDashboardAccountId =
+        mailboxDashBoardController.accountId.value;
+    if (currentSession != null &&
+        currentDashboardAccountId != null &&
+        effectiveAccountId != null &&
+        currentSession.accounts.containsKey(effectiveAccountId) &&
+        CapabilityIdentifier.jmapMail.isSupported(
+          currentSession,
+          effectiveAccountId,
+        )) {
+      final request = _LocationBarEmailRequest(
+        id: ++_locationBarEmailRequestId,
+        session: currentSession,
+        dashboardAccountId: currentDashboardAccountId,
+        requestedAccountId: effectiveAccountId,
+        requestedEmailId: emailId,
+      );
+      _activeLocationBarEmailRequest = request;
       consumeState(_getEmailByIdInteractor.execute(
-        _session!,
-        _accountId!,
+        currentSession,
+        effectiveAccountId,
         emailId,
-        properties: EmailUtils.getPropertiesForEmailGetMethod(_session!, _accountId!),
+        properties: EmailUtils.getPropertiesForEmailGetMethod(
+          currentSession,
+          effectiveAccountId,
+        ),
         mailboxContain: mailboxContain,
+        requestId: request.id,
       ));
     } else {
+      _invalidateLocationBarEmailRequest();
       logWarning('ThreadController::_getEmailByIdFromLocationBar: session & accountId is NULL');
       popAndPush(AppRoutes.unknownRoutePage);
     }
   }
 
+  bool _isCurrentLocationBarEmailState(GetEmailByIdRequestState state) {
+    final requestId = state.requestId;
+    if (requestId == null) return _activeLocationBarEmailRequest == null;
+    final activeRequest = _activeLocationBarEmailRequest;
+    return activeRequest != null &&
+        activeRequest.id == requestId &&
+        identical(activeRequest.session, _session) &&
+        activeRequest.dashboardAccountId ==
+            mailboxDashBoardController.accountId.value &&
+        activeRequest.requestedAccountId == state.requestedAccountId &&
+        activeRequest.requestedEmailId == state.requestedEmailId;
+  }
+
+  void _invalidateLocationBarEmailRequest() {
+    _activeLocationBarEmailRequest = null;
+  }
+
+  void invalidateLocationBarEmailRequest() {
+    _invalidateLocationBarEmailRequest();
+  }
+
+  @visibleForTesting
+  void getEmailByIdFromLocationBarForTesting(
+    EmailId emailId, {
+    AccountId? originatingAccountId,
+  }) => _getEmailByIdFromLocationBar(
+    emailId,
+    originatingAccountId: originatingAccountId,
+  );
+
   void _openEmailInsideMailboxFromLocationBar(
     PresentationEmail email,
     PresentationMailbox mailboxContain
   ) {
-    final presentationEmailWithRouter = email.withRouteWeb(RouteUtils.createUrlWebLocationBar(
+    final presentationEmailWithRouter = email.withRouteWeb(_locationBarUrlBuilder(
       AppRoutes.dashboard,
-      router: NavigationRouter(
+      NavigationRouter(
         emailId: email.id,
         mailboxId: mailboxContain.browserRouteMailboxId,
+        mailboxAccountId: mailboxContain.browserRouteMailboxAccountId,
         labelId: mailboxContain.labelId,
         dashboardType: DashboardType.normal
-      )
+      ),
     ));
     handleEmailActionType(
       EmailActionType.preview,
@@ -1615,6 +1745,7 @@ class ThreadController extends BaseController with EmailActionController {
         router: NavigationRouter(
           emailId: email.id,
           mailboxId: mailboxContain.mailboxId,
+          mailboxAccountId: mailboxContain.browserRouteMailboxAccountId,
           dashboardType: DashboardType.normal
         )
       ));
@@ -1705,6 +1836,7 @@ class ThreadController extends BaseController with EmailActionController {
   void _handleOpenEmailSearchedFromLocationBar({
     required EmailId emailId,
     SearchQuery? searchQuery,
+    AccountId? originatingAccountId,
   }) {
     searchController.enableSearch();
     if (searchQuery != null) {
@@ -1719,7 +1851,10 @@ class ThreadController extends BaseController with EmailActionController {
       searchController.searchFocus.unfocus();
     }
     _searchEmail();
-    _getEmailByIdFromLocationBar(emailId);
+    _getEmailByIdFromLocationBar(
+      emailId,
+      originatingAccountId: originatingAccountId,
+    );
     mailboxDashBoardController.clearDashBoardAction();
   }
 

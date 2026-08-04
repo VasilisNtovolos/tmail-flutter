@@ -217,6 +217,7 @@ import 'package:tmail_ui_user/features/thread/domain/state/move_multiple_email_t
 import 'package:tmail_ui_user/features/thread/domain/state/refresh_all_email_state.dart';
 import 'package:tmail_ui_user/features/thread/domain/usecases/empty_spam_folder_interactor.dart';
 import 'package:tmail_ui_user/features/thread/domain/usecases/get_email_by_id_interactor.dart';
+import 'package:tmail_ui_user/features/thread/presentation/thread_controller.dart';
 import 'package:tmail_ui_user/features/thread/domain/usecases/mark_as_multiple_email_read_interactor.dart';
 import 'package:tmail_ui_user/features/thread/domain/usecases/mark_as_star_multiple_email_interactor.dart';
 import 'package:tmail_ui_user/features/thread/domain/usecases/move_multiple_email_to_mailbox_interactor.dart';
@@ -2553,6 +2554,9 @@ class MailboxDashBoardController extends ReloadableController
 
   void _getPresentationEmailFromEmailIdAction(EmailId emailId, AccountId accountId, Session session) {
     log('MailboxDashBoardController:_getPresentationEmailFromEmailIdAction:emailId: $emailId');
+    if (Get.isRegistered<ThreadController>()) {
+      Get.find<ThreadController>().invalidateLocationBarEmailRequest();
+    }
     consumeState(_getEmailByIdInteractor.execute(
       session,
       accountId,
@@ -3135,6 +3139,9 @@ class MailboxDashBoardController extends ReloadableController
             mailboxId: isSearchRunning
               ? null
               : currentMailbox?.browserRouteMailboxId,
+            mailboxAccountId: isSearchRunning
+              ? null
+              : currentMailbox?.browserRouteMailboxAccountId,
             labelId: currentMailbox?.labelId,
             dashboardType: isSearchRunning
               ? DashboardType.search

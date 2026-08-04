@@ -52,6 +52,9 @@ extension ListPresentationEmailExtensions on List<PresentationEmail> {
           mailboxId: isSearchEmailRunning
               ? null
               : selectedMailbox?.browserRouteMailboxId,
+          mailboxAccountId: isSearchEmailRunning
+              ? null
+              : selectedMailbox?.browserRouteMailboxAccountId,
           labelId: selectedMailbox?.labelId,
           searchQuery: isSearchEmailRunning ? searchQuery : null,
           dashboardType: isSearchEmailRunning ? DashboardType.search : DashboardType.normal

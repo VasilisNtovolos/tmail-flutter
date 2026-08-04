@@ -4,6 +4,7 @@ import 'package:core/data/network/config/service_path.dart';
 import 'package:core/utils/app_logger.dart';
 import 'package:core/utils/platform_info.dart';
 import 'package:get/get.dart';
+import 'package:jmap_dart_client/jmap/account_id.dart';
 import 'package:jmap_dart_client/jmap/core/id.dart';
 import 'package:jmap_dart_client/jmap/mail/email/email.dart';
 import 'package:jmap_dart_client/jmap/mail/email/email_address.dart';
@@ -20,6 +21,7 @@ abstract class RouteUtils {
   static const String paramID = 'id';
   static const String paramType = 'type';
   static const String paramContext = 'context';
+  static const String paramMailboxAccountId = 'mailboxAccountId';
   static const String paramLabelId = 'labelId';
   static const String paramQuery = 'q';
   static const String paramRouteName = 'routeName';
@@ -65,6 +67,11 @@ abstract class RouteUtils {
           StringQueryParameter(paramLabelId, router.labelId!.value)
         else if (router.mailboxId != null)
           StringQueryParameter(paramContext, router.mailboxId!.id.value),
+        if (router.mailboxId != null && router.mailboxAccountId != null)
+          StringQueryParameter(
+            paramMailboxAccountId,
+            router.mailboxAccountId!.id.value,
+          ),
         if (router.searchQuery != null)
           StringQueryParameter(paramQuery, router.searchQuery!.value),
       ]);
@@ -127,6 +134,7 @@ abstract class RouteUtils {
     final idParam = parameters[paramID];
     final typeParam = parameters[paramType];
     final contextPram = parameters[paramContext];
+    final mailboxAccountIdParam = parameters[paramMailboxAccountId];
     final labelIdPram = parameters[paramLabelId];
     final queryParam = parameters[paramQuery];
     final routeName = parameters[paramRouteName];
@@ -138,9 +146,26 @@ abstract class RouteUtils {
 
     final emailId = idParam != null ? EmailId(Id(idParam)) : null;
     final labelId = labelIdPram != null ? Id(labelIdPram) : null;
-    final mailboxId = labelId == null && contextPram != null
-        ? MailboxId(Id(contextPram))
-        : null;
+    MailboxId? mailboxId;
+    AccountId? mailboxAccountId;
+    var hasMalformedMailboxContext =
+        mailboxAccountIdParam != null &&
+            (contextPram == null || labelId != null);
+    if (labelId == null && contextPram != null) {
+      try {
+        mailboxId = MailboxId(Id(contextPram));
+        if (mailboxAccountIdParam != null) {
+          final mailboxAccountIdValue = mailboxAccountIdParam.toString();
+          if (mailboxAccountIdValue.trim().isEmpty) {
+            hasMalformedMailboxContext = true;
+          } else {
+            mailboxAccountId = AccountId(Id(mailboxAccountIdValue));
+          }
+        }
+      } catch (_) {
+        hasMalformedMailboxContext = true;
+      }
+    }
     final searchQuery = queryParam != null ? SearchQuery(queryParam) : null;
     final dashboardType = DashboardType.values.firstWhereOrNull((type) => type.name == typeParam) ?? DashboardType.normal;
     final settingType = AccountMenuItem.values.firstWhereOrNull((type) => type.getAliasBrowser() == typeParam) ?? AccountMenuItem.none;
@@ -154,6 +179,9 @@ abstract class RouteUtils {
     return NavigationRouter(
       emailId: emailId,
       mailboxId: mailboxId,
+      mailboxAccountId:
+          hasMalformedMailboxContext ? null : mailboxAccountId,
+      hasMalformedMailboxContext: hasMalformedMailboxContext,
       labelId: labelId,
       searchQuery: searchQuery,
       dashboardType: dashboardType,

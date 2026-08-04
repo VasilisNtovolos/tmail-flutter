@@ -10,6 +10,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:get/get.dart';
 import 'package:jmap_dart_client/jmap/account_id.dart';
 import 'package:jmap_dart_client/jmap/core/id.dart';
+import 'package:jmap_dart_client/jmap/core/session/session.dart';
 import 'package:jmap_dart_client/jmap/core/state.dart';
 import 'package:jmap_dart_client/jmap/core/unsigned_int.dart';
 import 'package:jmap_dart_client/jmap/mail/email/email.dart';
@@ -42,6 +43,7 @@ import 'package:tmail_ui_user/features/thread/domain/usecases/clean_and_get_emai
 import 'package:tmail_ui_user/features/thread/domain/usecases/get_email_by_id_interactor.dart';
 import 'package:tmail_ui_user/features/thread/domain/usecases/get_emails_in_mailbox_interactor.dart';
 import 'package:tmail_ui_user/features/thread/domain/state/get_all_email_state.dart';
+import 'package:tmail_ui_user/features/thread/domain/state/get_email_by_id_state.dart';
 import 'package:tmail_ui_user/features/thread/domain/state/load_more_emails_state.dart';
 import 'package:tmail_ui_user/features/thread/domain/usecases/load_more_emails_in_mailbox_interactor.dart';
 import 'package:tmail_ui_user/features/thread/domain/usecases/refresh_changes_emails_in_mailbox_interactor.dart';
@@ -52,6 +54,8 @@ import 'package:tmail_ui_user/features/thread/presentation/model/search_state.da
 import 'package:tmail_ui_user/features/thread/presentation/model/search_status.dart';
 import 'package:tmail_ui_user/features/thread/presentation/thread_controller.dart';
 import 'package:tmail_ui_user/main/bindings/network/binding_tag.dart';
+import 'package:tmail_ui_user/main/routes/app_routes.dart';
+import 'package:tmail_ui_user/main/routes/route_utils.dart';
 import 'package:tmail_ui_user/main/utils/toast_manager.dart';
 import 'package:tmail_ui_user/main/utils/twake_app_manager.dart';
 import 'package:uuid/uuid.dart';
@@ -108,6 +112,7 @@ void main() {
   late MockSearchMoreEmailInteractor mockSearchMoreEmailInteractor;
   late MockGetEmailByIdInteractor mockGetEmailByIdInteractor;
   late MockCleanAndGetEmailsInMailboxInteractor mockCleanAndGetEmailsInMailboxInteractor;
+  final locationBarRoutes = <String>[];
 
   // Declaration base controller
   late MockCachingManager mockCachingManager;
@@ -183,12 +188,390 @@ void main() {
       mockSearchMoreEmailInteractor,
       mockGetEmailByIdInteractor,
       mockCleanAndGetEmailsInMailboxInteractor,
+      locationBarUrlBuilder: (route, router) => Uri.https(
+        'mail.test',
+        route,
+        {
+          if (router.emailId != null)
+            RouteUtils.paramID: router.emailId!.id.value,
+          if (router.mailboxId != null)
+            RouteUtils.paramContext: router.mailboxId!.id.value,
+          if (router.mailboxAccountId != null)
+            RouteUtils.paramMailboxAccountId:
+                router.mailboxAccountId!.id.value,
+        },
+      ),
+      locationBarNavigator: locationBarRoutes.add,
     );
     when(mockMailboxDashBoardController.mapMailboxByIdForAccount(any))
         .thenReturn({});
   });
 
   group('ThreadController::test', () {
+    test('shared search-result email fetch uses originating route account', () async {
+      final emailId = EmailId(Id('shared-search-email'));
+      final primaryAccountId = AccountId(Id('primary-account'));
+      when(mockMailboxDashBoardController.sessionCurrent)
+          .thenReturn(SessionFixtures.aliceSession);
+      when(mockMailboxDashBoardController.accountId)
+          .thenReturn(Rxn(primaryAccountId));
+      when(mockMailboxDashBoardController.selectedMailbox)
+          .thenReturn(Rxn<PresentationMailbox>());
+      when(mockGetEmailByIdInteractor.execute(
+        any,
+        any,
+        any,
+        properties: anyNamed('properties'),
+        mailboxContain: anyNamed('mailboxContain'),
+        requestId: anyNamed('requestId'),
+      )).thenAnswer((_) => const Stream.empty());
+
+      threadController.getEmailByIdFromLocationBarForTesting(
+        emailId,
+        originatingAccountId: AccountFixtures.aliceAccountId,
+      );
+
+      await untilCalled(mockGetEmailByIdInteractor.execute(
+        any,
+        AccountFixtures.aliceAccountId,
+        emailId,
+        properties: anyNamed('properties'),
+        mailboxContain: anyNamed('mailboxContain'),
+        requestId: anyNamed('requestId'),
+      ));
+      verify(mockGetEmailByIdInteractor.execute(
+        SessionFixtures.aliceSession,
+        AccountFixtures.aliceAccountId,
+        emailId,
+        properties: anyNamed('properties'),
+        mailboxContain: anyNamed('mailboxContain'),
+        requestId: anyNamed('requestId'),
+      )).called(1);
+    });
+
+    group('location-bar Email/get response identity', () {
+      final primaryAccountId = AccountId(Id('primary-account'));
+      final accountA = AccountFixtures.aliceAccountId;
+      final accountB = AccountId(Id('account-b'));
+      final sourceSession = SessionFixtures.aliceSession;
+      late Session requestSession;
+
+      setUp(() {
+        locationBarRoutes.clear();
+        requestSession = Session(
+          sourceSession.capabilities,
+          {
+            ...sourceSession.accounts,
+            accountB: sourceSession.accounts[accountA]!,
+          },
+          sourceSession.primaryAccounts,
+          sourceSession.username,
+          sourceSession.apiUrl,
+          sourceSession.downloadUrl,
+          sourceSession.uploadUrl,
+          sourceSession.eventSourceUrl,
+          sourceSession.state,
+        );
+        clearInteractions(mockGetEmailByIdInteractor);
+        clearInteractions(mockMailboxDashBoardController);
+        when(mockMailboxDashBoardController.sessionCurrent)
+            .thenReturn(requestSession);
+        when(mockMailboxDashBoardController.accountId)
+            .thenReturn(Rxn(primaryAccountId));
+        when(mockMailboxDashBoardController.selectedMailbox)
+            .thenReturn(Rxn<PresentationMailbox>());
+        when(mockMailboxDashBoardController.searchController)
+            .thenReturn(mockSearchController);
+        when(mockSearchController.isSearchEmailRunning).thenReturn(false);
+        when(mockMailboxDashBoardController.mapMailboxById).thenReturn({});
+        when(mockGetEmailByIdInteractor.execute(
+          any,
+          any,
+          any,
+          properties: anyNamed('properties'),
+          mailboxContain: anyNamed('mailboxContain'),
+          requestId: anyNamed('requestId'),
+        )).thenAnswer((_) => const Stream.empty());
+      });
+
+      int startRequest(AccountId accountId, EmailId emailId) {
+        threadController.getEmailByIdFromLocationBarForTesting(
+          emailId,
+          originatingAccountId: accountId,
+        );
+        final captured = verify(mockGetEmailByIdInteractor.execute(
+          any,
+          accountId,
+          emailId,
+          properties: anyNamed('properties'),
+          mailboxContain: anyNamed('mailboxContain'),
+          requestId: captureAnyNamed('requestId'),
+        )).captured;
+        return captured.single as int;
+      }
+
+      GetEmailByIdSuccess successFor(
+        AccountId accountId,
+        EmailId emailId,
+        int? requestId,
+      ) => GetEmailByIdSuccess(
+        PresentationEmail(id: emailId),
+        requestedAccountId: accountId,
+        requestedEmailId: emailId,
+        requestId: requestId,
+        mailboxContain: PresentationMailbox(
+          MailboxId(Id('mailbox-${accountId.id.value}')),
+          accountId: accountId,
+          isSharedAccount: true,
+        ),
+      );
+
+      GetEmailByIdLoading loadingFor(
+        AccountId accountId,
+        EmailId emailId,
+        int? requestId,
+      ) => GetEmailByIdLoading(
+        requestedAccountId: accountId,
+        requestedEmailId: emailId,
+        requestId: requestId,
+      );
+
+      GetEmailByIdFailure failureFor(
+        AccountId accountId,
+        EmailId emailId,
+        int? requestId,
+      ) => GetEmailByIdFailure(
+        Exception('failed'),
+        requestedAccountId: accountId,
+        requestedEmailId: emailId,
+        requestId: requestId,
+      );
+
+      test('current shared response opens the requested email', () {
+        final emailId = EmailId(Id('current-email'));
+        final requestId = startRequest(accountA, emailId);
+
+        threadController.handleSuccessViewState(
+          successFor(accountA, emailId, requestId),
+        );
+
+        final openedEmail = verify(
+          mockMailboxDashBoardController.openEmailDetailedView(captureAny),
+        ).captured.single as PresentationEmail;
+        expect(openedEmail.id, emailId);
+        expect(
+          openedEmail.routeWeb?.queryParameters[
+            RouteUtils.paramMailboxAccountId
+          ],
+          accountA.id.value,
+        );
+        expect(threadController.openingEmail.value, isFalse);
+      });
+
+      test('same email ID from account A is ignored after account B request', () {
+        final emailId = EmailId(Id('duplicate-email'));
+        final requestA = startRequest(accountA, emailId);
+        final requestB = startRequest(accountB, emailId);
+        threadController.openingEmail.value = true;
+
+        threadController.handleSuccessViewState(
+          successFor(accountA, emailId, requestA),
+        );
+
+        verifyNever(mockMailboxDashBoardController.openEmailDetailedView(any));
+        expect(threadController.openingEmail.value, isTrue);
+
+        threadController.handleSuccessViewState(
+          successFor(accountB, emailId, requestB),
+        );
+        verify(mockMailboxDashBoardController.openEmailDetailedView(any))
+            .called(1);
+      });
+
+      test('email A response cannot clear or open over newer email B', () {
+        final emailA = EmailId(Id('email-a'));
+        final emailB = EmailId(Id('email-b'));
+        final requestA = startRequest(accountA, emailA);
+        final requestB = startRequest(accountA, emailB);
+
+        threadController.handleSuccessViewState(
+          successFor(accountA, emailA, requestA),
+        );
+        verifyNever(mockMailboxDashBoardController.openEmailDetailedView(any));
+
+        threadController.handleSuccessViewState(
+          successFor(accountA, emailB, requestB),
+        );
+        verify(mockMailboxDashBoardController.openEmailDetailedView(
+          argThat(predicate<PresentationEmail>((email) => email.id == emailB)),
+        )).called(1);
+      });
+
+      test('old loading cannot mutate a newer request', () {
+        final emailA = EmailId(Id('loading-email-a'));
+        final emailB = EmailId(Id('loading-email-b'));
+        final requestA = startRequest(accountA, emailA);
+        startRequest(accountB, emailB);
+        threadController.openingEmail.value = false;
+
+        threadController.handleSuccessViewState(
+          loadingFor(accountA, emailA, requestA),
+        );
+
+        expect(threadController.openingEmail.value, isFalse);
+        verifyNever(mockMailboxDashBoardController.openEmailDetailedView(any));
+      });
+
+      test('old account failure cannot mutate or clear a newer request', () {
+        final emailId = EmailId(Id('failure-duplicate-email'));
+        final requestA = startRequest(accountA, emailId);
+        final requestB = startRequest(accountB, emailId);
+        threadController.openingEmail.value = true;
+
+        threadController.handleFailureViewState(
+          failureFor(accountA, emailId, requestA),
+        );
+        expect(threadController.openingEmail.value, isTrue);
+
+        threadController.handleSuccessViewState(
+          successFor(accountB, emailId, requestB),
+        );
+        verify(mockMailboxDashBoardController.openEmailDetailedView(any))
+            .called(1);
+      });
+
+      test('null-token states are ignored while a tokenized request is active', () {
+        final emailId = EmailId(Id('tokenized-email'));
+        final requestId = startRequest(accountA, emailId);
+        threadController.openingEmail.value = false;
+
+        threadController.handleSuccessViewState(
+          loadingFor(accountA, emailId, null),
+        );
+        threadController.handleSuccessViewState(
+          successFor(accountA, emailId, null),
+        );
+        threadController.handleFailureViewState(
+          failureFor(accountA, emailId, null),
+        );
+
+        expect(threadController.openingEmail.value, isFalse);
+        verifyNever(mockMailboxDashBoardController.openEmailDetailedView(any));
+
+        threadController.handleSuccessViewState(
+          successFor(accountA, emailId, requestId),
+        );
+        verify(mockMailboxDashBoardController.openEmailDetailedView(any))
+            .called(1);
+      });
+
+      test('matching current failure keeps existing unknown-route behavior', () {
+        final emailId = EmailId(Id('current-failure-email'));
+        final requestId = startRequest(accountA, emailId);
+        threadController.openingEmail.value = true;
+
+        threadController.handleFailureViewState(
+          failureFor(accountA, emailId, requestId),
+        );
+
+        expect(threadController.openingEmail.value, isFalse);
+        expect(locationBarRoutes, [AppRoutes.unknownRoutePage]);
+        threadController.handleSuccessViewState(
+          loadingFor(accountA, emailId, null),
+        );
+        expect(threadController.openingEmail.value, isTrue);
+      });
+
+      test('navigating away invalidates the active response before mutation', () {
+        final emailId = EmailId(Id('left-email'));
+        final requestId = startRequest(accountA, emailId);
+        threadController.openingEmail.value = true;
+        threadController.clearState();
+
+        threadController.handleSuccessViewState(
+          successFor(accountA, emailId, requestId),
+        );
+
+        verifyNever(mockMailboxDashBoardController.openEmailDetailedView(any));
+        expect(threadController.openingEmail.value, isTrue);
+      });
+
+      test('session replacement invalidates the active response', () {
+        final emailId = EmailId(Id('old-session-email'));
+        final requestId = startRequest(accountA, emailId);
+        final replacementSession = Session(
+          requestSession.capabilities,
+          requestSession.accounts,
+          requestSession.primaryAccounts,
+          requestSession.username,
+          requestSession.apiUrl,
+          requestSession.downloadUrl,
+          requestSession.uploadUrl,
+          requestSession.eventSourceUrl,
+          requestSession.state,
+        );
+        when(mockMailboxDashBoardController.sessionCurrent)
+            .thenReturn(replacementSession);
+        threadController.openingEmail.value = true;
+
+        threadController.handleSuccessViewState(
+          successFor(accountA, emailId, requestId),
+        );
+
+        verifyNever(mockMailboxDashBoardController.openEmailDetailedView(any));
+        expect(threadController.openingEmail.value, isTrue);
+      });
+
+      test('account-context replacement invalidates the active response', () {
+        final emailId = EmailId(Id('old-account-context-email'));
+        final requestId = startRequest(accountA, emailId);
+        when(mockMailboxDashBoardController.accountId)
+            .thenReturn(Rxn(accountB));
+        threadController.openingEmail.value = true;
+
+        threadController.handleSuccessViewState(
+          successFor(accountA, emailId, requestId),
+        );
+
+        verifyNever(mockMailboxDashBoardController.openEmailDetailedView(any));
+        expect(threadController.openingEmail.value, isTrue);
+      });
+
+      test('controller teardown invalidates the active response', () {
+        final controller = ThreadController(
+          mockGetEmailsInMailboxInteractor,
+          mockRefreshChangesEmailsInMailboxInteractor,
+          mockLoadMoreEmailsInMailboxInteractor,
+          mockSearchEmailInteractor,
+          mockSearchMoreEmailInteractor,
+          mockGetEmailByIdInteractor,
+          mockCleanAndGetEmailsInMailboxInteractor,
+        );
+        final emailId = EmailId(Id('closed-controller-email'));
+        controller.getEmailByIdFromLocationBarForTesting(
+          emailId,
+          originatingAccountId: accountA,
+        );
+        final requestId = verify(mockGetEmailByIdInteractor.execute(
+          any,
+          accountA,
+          emailId,
+          properties: anyNamed('properties'),
+          mailboxContain: anyNamed('mailboxContain'),
+          requestId: captureAnyNamed('requestId'),
+        )).captured.single as int;
+        controller.openingEmail.value = true;
+        controller.onClose();
+
+        controller.handleSuccessViewState(
+          successFor(accountA, emailId, requestId),
+        );
+
+        verifyNever(mockMailboxDashBoardController.openEmailDetailedView(any));
+        expect(controller.openingEmail.value, isTrue);
+      });
+    });
+
     group('validateListEmailsLoadMore::test', () {
       final MailboxId selectedMailboxId = MailboxId(Id('mailboxA'));
       final emailsInCurrentMailbox = <PresentationEmail>[];
