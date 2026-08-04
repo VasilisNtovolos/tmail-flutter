@@ -1,3 +1,4 @@
+import 'package:jmap_dart_client/jmap/account_id.dart';
 import 'package:jmap_dart_client/jmap/mail/email/email.dart';
 import 'package:jmap_dart_client/jmap/mail/mailbox/mailbox.dart';
 
@@ -16,6 +17,7 @@ class EmptyFolderLoading extends EmptyFolderState {
 }
 
 class EmptyFolderSuccess extends EmptyFolderState {
+  final AccountId accountId;
   final List<EmailId> clearedEmailIds;
   final MailboxId mailboxId;
   final SubfoldersDeleteStatus subfoldersStatus;
@@ -23,6 +25,7 @@ class EmptyFolderSuccess extends EmptyFolderState {
   final Object? subfoldersException;
 
   const EmptyFolderSuccess({
+    required this.accountId,
     required this.clearedEmailIds,
     required this.mailboxId,
     this.subfoldersStatus = SubfoldersDeleteStatus.none,

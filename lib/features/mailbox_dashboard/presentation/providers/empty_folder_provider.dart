@@ -125,6 +125,7 @@ class EmptyFolderNotifier extends _$EmptyFolderNotifier {
     if (!mounted) return;
 
     state = EmptyFolderSuccess(
+      accountId: accountId,
       clearedEmailIds: (emailResult as _ClearEmailSuccess).emailIds,
       mailboxId: mailbox.id,
       subfoldersStatus: subfoldersResult.status,

@@ -3,9 +3,11 @@ import 'dart:collection';
 
 import 'package:collection/collection.dart';
 import 'package:equatable/equatable.dart';
+import 'package:jmap_dart_client/jmap/account_id.dart';
 import 'package:jmap_dart_client/jmap/core/unsigned_int.dart';
 import 'package:jmap_dart_client/jmap/mail/mailbox/mailbox.dart';
 import 'package:model/mailbox/expand_mode.dart';
+import 'package:model/mailbox/mailbox_identity.dart';
 import 'package:model/mailbox/presentation_mailbox.dart';
 import 'package:model/mailbox/select_mode.dart';
 import 'package:tmail_ui_user/features/mailbox/presentation/extensions/presentation_mailbox_extension.dart';
@@ -52,14 +54,46 @@ class MailboxTree with EquatableMixin {
     return listResult;
   }
 
-  MailboxNode? updateExpandedNode(MailboxNode selectedNode, ExpandMode newExpandMode) {
-    var matchedNode = findNode((node) => node.item.id == selectedNode.item.id);
+  MailboxNode? findNodeByIdentity(
+    MailboxIdentity identity, {
+    AccountId? primaryAccountId,
+  }) => findNode(
+    (node) => MailboxIdentity.fromMailbox(
+      node.item,
+      primaryAccountId: primaryAccountId,
+    ) == identity,
+  );
+
+  MailboxNode? updateExpandedNode(
+    MailboxNode selectedNode,
+    ExpandMode newExpandMode, {
+    AccountId? primaryAccountId,
+  }) {
+    final identity = MailboxIdentity.fromMailbox(
+      selectedNode.item,
+      primaryAccountId: primaryAccountId,
+    );
+    var matchedNode = findNodeByIdentity(
+      identity,
+      primaryAccountId: primaryAccountId,
+    );
     matchedNode?.expandMode = newExpandMode;
     return matchedNode;
   }
 
-  MailboxNode? updateSelectedNode(MailboxNode selectedNode, SelectMode newSelectMode) {
-    var matchedNode = findNode((node) => node.item.id == selectedNode.item.id);
+  MailboxNode? updateSelectedNode(
+    MailboxNode selectedNode,
+    SelectMode newSelectMode, {
+    AccountId? primaryAccountId,
+  }) {
+    final identity = MailboxIdentity.fromMailbox(
+      selectedNode.item,
+      primaryAccountId: primaryAccountId,
+    );
+    var matchedNode = findNodeByIdentity(
+      identity,
+      primaryAccountId: primaryAccountId,
+    );
     matchedNode?.selectMode = newSelectMode;
     return matchedNode;
   }
@@ -93,6 +127,20 @@ class MailboxTree with EquatableMixin {
     return false;
   }
 
+  bool updateMailboxName(
+    MailboxIdentity identity,
+    MailboxName mailboxName, {
+    AccountId? primaryAccountId,
+  }) {
+    final matchedNode = findNodeByIdentity(
+      identity,
+      primaryAccountId: primaryAccountId,
+    );
+    if (matchedNode == null) return false;
+    matchedNode.item = matchedNode.item.copyWith(name: mailboxName);
+    return true;
+  }
+
   bool updateMailboxUnreadCountById(MailboxId mailboxId, int unreadCount) {
     final matchedNode = findNode((node) => node.item.id == mailboxId);
     if (matchedNode != null) {
@@ -107,6 +155,25 @@ class MailboxTree with EquatableMixin {
     return false;
   }
 
+  bool updateMailboxUnreadCount(
+    MailboxIdentity identity,
+    int unreadCount, {
+    AccountId? primaryAccountId,
+  }) {
+    final matchedNode = findNodeByIdentity(
+      identity,
+      primaryAccountId: primaryAccountId,
+    );
+    if (matchedNode == null) return false;
+    final currentUnreadCount = matchedNode.item.unreadEmails?.value.value ?? 0;
+    final updatedUnreadCount = currentUnreadCount + unreadCount;
+    if (updatedUnreadCount < 0) return true;
+    matchedNode.item = matchedNode.item.copyWith(
+      unreadEmails: UnreadEmails(UnsignedInt(updatedUnreadCount)),
+    );
+    return true;
+  }
+
   bool updateMailboxTotalEmailsCountById(MailboxId mailboxId, int totalEmailsCount) {
     final matchedNode = findNode((node) => node.item.id == mailboxId);
     if (matchedNode != null) {
@@ -119,6 +186,26 @@ class MailboxTree with EquatableMixin {
       return true;
     }
     return false;
+  }
+
+  bool updateMailboxTotalEmailsCount(
+    MailboxIdentity identity,
+    int totalEmailsCount, {
+    AccountId? primaryAccountId,
+  }) {
+    final matchedNode = findNodeByIdentity(
+      identity,
+      primaryAccountId: primaryAccountId,
+    );
+    if (matchedNode == null) return false;
+    final currentTotalEmailsCount =
+        matchedNode.item.totalEmails?.value.value ?? 0;
+    final updatedTotalEmailsCount = currentTotalEmailsCount + totalEmailsCount;
+    if (updatedTotalEmailsCount < 0) return true;
+    matchedNode.item = matchedNode.item.copyWith(
+      totalEmails: TotalEmails(UnsignedInt(updatedTotalEmailsCount)),
+    );
+    return true;
   }
 
   String? getNodePath(MailboxId mailboxId, String pathSeparator) {
@@ -150,11 +237,47 @@ class MailboxTree with EquatableMixin {
     return path;
   }
 
-  List<MailboxNode>? getAncestorList(MailboxNode mailboxNode) {
+  String? getNodePathByIdentity(
+    MailboxIdentity identity,
+    String pathSeparator, {
+    AccountId? primaryAccountId,
+  }) {
+    final matchedNode = findNodeByIdentity(
+      identity,
+      primaryAccountId: primaryAccountId,
+    );
+    if (matchedNode == null) return null;
+    String path = currentContext != null
+        ? matchedNode.item.getDisplayName(currentContext!)
+        : '${matchedNode.item.name?.name}';
+    var parentId = matchedNode.item.parentId;
+    while (parentId != null) {
+      final parentNode = findNodeByIdentity(
+        MailboxIdentity(identity.accountId, parentId),
+        primaryAccountId: primaryAccountId,
+      );
+      if (parentNode == null) break;
+      final parentName = currentContext != null
+          ? parentNode.item.getDisplayName(currentContext!)
+          : '${parentNode.item.name?.name}';
+      path = '$parentName$pathSeparator$path';
+      parentId = parentNode.item.parentId;
+    }
+    return path;
+  }
+
+  List<MailboxNode>? getAncestorList(
+    MailboxNode mailboxNode, {
+    AccountId? primaryAccountId,
+  }) {
+    final accountId = mailboxNode.item.accountId ?? primaryAccountId;
     var parentId = mailboxNode.item.parentId;
     List<MailboxNode> ancestor = <MailboxNode>[];
     while(parentId != null) {
-      final parentNode = findNode((node) => node.item.id == parentId);
+      final parentNode = findNodeByIdentity(
+        MailboxIdentity(accountId, parentId),
+        primaryAccountId: primaryAccountId,
+      );
       if (parentNode == null) {
         break;
       }

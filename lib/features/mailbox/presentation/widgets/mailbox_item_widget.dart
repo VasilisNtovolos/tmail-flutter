@@ -5,10 +5,12 @@ import 'package:core/utils/platform_info.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import 'package:get/get.dart';
+import 'package:jmap_dart_client/jmap/account_id.dart';
 import 'package:jmap_dart_client/jmap/mail/mailbox/mailbox.dart';
 import 'package:model/email/presentation_email.dart';
 import 'package:model/extensions/presentation_mailbox_extension.dart';
 import 'package:model/mailbox/presentation_mailbox.dart';
+import 'package:model/mailbox/mailbox_identity.dart';
 import 'package:tmail_ui_user/features/mailbox/presentation/extensions/presentation_mailbox_extension.dart';
 import 'package:tmail_ui_user/features/mailbox/presentation/model/mailbox_actions.dart';
 import 'package:tmail_ui_user/features/mailbox/presentation/model/mailbox_displayed.dart';
@@ -18,11 +20,27 @@ import 'package:tmail_ui_user/features/mailbox/presentation/utils/mailbox_method
 import 'package:tmail_ui_user/features/mailbox/presentation/widgets/label_mailbox_item_widget.dart';
 import 'package:tmail_ui_user/features/mailbox/presentation/widgets/mailbox_icon_widget.dart';
 
+bool isMailboxSelectedByIdentity({
+  required PresentationMailbox? selectedMailbox,
+  required PresentationMailbox mailbox,
+  AccountId? primaryAccountId,
+}) {
+  if (selectedMailbox == null) return false;
+  return MailboxIdentity.fromMailbox(
+    selectedMailbox,
+    primaryAccountId: primaryAccountId,
+  ) == MailboxIdentity.fromMailbox(
+    mailbox,
+    primaryAccountId: primaryAccountId,
+  );
+}
+
 class MailboxItemWidget extends StatefulWidget {
 
   final MailboxNode mailboxNode;
   final MailboxDisplayed mailboxDisplayed;
   final PresentationMailbox? mailboxNodeSelected;
+  final AccountId? primaryAccountId;
   final MailboxActions? mailboxActions;
   final MailboxId? mailboxIdAlreadySelected;
   final Color? hoverColor;
@@ -48,6 +66,7 @@ class MailboxItemWidget extends StatefulWidget {
     this.isHighlighted = false,
     this.isDraggingMailbox = false,
     this.mailboxNodeSelected,
+    this.primaryAccountId,
     this.mailboxActions,
     this.mailboxIdAlreadySelected,
     this.hoverColor,
@@ -320,8 +339,11 @@ class _MailboxItemWidgetState extends State<MailboxItemWidget> {
     }
   }
 
-  bool get _isSelected =>
-      widget.mailboxNodeSelected?.id == widget.mailboxNode.item.id;
+  bool get _isSelected => isMailboxSelectedByIdentity(
+    selectedMailbox: widget.mailboxNodeSelected,
+    mailbox: widget.mailboxNode.item,
+    primaryAccountId: widget.primaryAccountId,
+  );
 
   Color get backgroundColorItem {
     // Non-mailbox views are always white

@@ -136,6 +136,17 @@ class ThreadController extends BaseController with EmailActionController {
 
   SearchEmailFilter get _searchEmailFilter => searchController.searchEmailFilter.value;
 
+  Map<MailboxId, PresentationMailbox> _mailboxesForAccount(
+    AccountId? originatingAccountId,
+  ) {
+    final effectiveAccountId = originatingAccountId ?? _accountId;
+    if (effectiveAccountId == null) {
+      return mailboxDashBoardController.mapMailboxById;
+    }
+    return mailboxDashBoardController
+        .mapMailboxByIdForAccount(effectiveAccountId);
+  }
+
   bool get _isCollapseThreadsEnabled =>
       appProviderContainer.read(localSettingsProvider).threadConfig.isEnabled;
 
@@ -628,7 +639,7 @@ class ThreadController extends BaseController with EmailActionController {
     mailboxDashBoardController.updateRefreshAllEmailState(Right(RefreshAllEmailSuccess()));
     mailboxDashBoardController.setCurrentEmailState(success.currentEmailState);
     final newListEmail = success.emailList.syncPresentationEmail(
-      mapMailboxById: mailboxDashBoardController.mapMailboxById,
+      mapMailboxById: _mailboxesForAccount(success.currentAccountId),
       selectedMailbox: selectedMailbox,
       searchQuery: searchController.searchQuery,
       isSearchEmailRunning: searchController.isSearchEmailRunning
@@ -711,7 +722,7 @@ class ThreadController extends BaseController with EmailActionController {
     final emailsAfterChanges = success.emailList;
     final newListEmail = emailsAfterChanges.combine(emailsBeforeChanges);
     final emailListSynced = newListEmail.syncPresentationEmail(
-      mapMailboxById: mailboxDashBoardController.mapMailboxById,
+      mapMailboxById: _mailboxesForAccount(success.currentAccountId),
       selectedMailbox: selectedMailbox,
       searchQuery: searchController.searchQuery,
       isSearchEmailRunning: searchController.isSearchEmailRunning
@@ -1052,7 +1063,7 @@ class ThreadController extends BaseController with EmailActionController {
       .where(_validatePresentationEmail)
       .toList()
       .syncPresentationEmail(
-        mapMailboxById: mailboxDashBoardController.mapMailboxById,
+        mapMailboxById: _mailboxesForAccount(null),
         selectedMailbox: selectedMailbox,
         searchQuery: searchController.searchQuery,
         isSearchEmailRunning: searchController.isSearchEmailRunning
@@ -1260,14 +1271,16 @@ class ThreadController extends BaseController with EmailActionController {
     final emailList = success.emailList;
     log('ThreadController::_searchEmailsSuccess: COUNT = ${emailList.length}');
     final resultEmailSearchList = emailList
-        .map((email) => email.toSearchPresentationEmail(mailboxDashBoardController.mapMailboxById))
+        .map((email) => email.toSearchPresentationEmail(
+          _mailboxesForAccount(null),
+        ))
         .toList();
 
     final emailsSearchBeforeChanges = mailboxDashBoardController.emailsInCurrentMailbox;
     final emailsSearchAfterChanges = resultEmailSearchList;
     final newListEmailSearch = emailsSearchAfterChanges.combine(emailsSearchBeforeChanges);
     final newEmailListSynced = newListEmailSearch.syncPresentationEmail(
-      mapMailboxById: mailboxDashBoardController.mapMailboxById,
+      mapMailboxById: _mailboxesForAccount(null),
       selectedMailbox: selectedMailbox,
       searchQuery: searchController.searchQuery,
       isSearchEmailRunning: isSearchActive,
@@ -1344,11 +1357,13 @@ class ThreadController extends BaseController with EmailActionController {
     log('ThreadController::_searchMoreEmailsSuccess: COUNT = ${emailList.length}');
     if (emailList.isNotEmpty) {
       final resultEmailSearchList = emailList
-          .map((email) => email.toSearchPresentationEmail(mailboxDashBoardController.mapMailboxById))
+          .map((email) => email.toSearchPresentationEmail(
+            _mailboxesForAccount(null),
+          ))
           .where((email) => mailboxDashBoardController.emailsInCurrentMailbox.every((emailInCurrentMailbox) => emailInCurrentMailbox.id != email.id))
           .toList()
           .syncPresentationEmail(
-            mapMailboxById: mailboxDashBoardController.mapMailboxById,
+            mapMailboxById: _mailboxesForAccount(null),
             selectedMailbox: selectedMailbox,
             searchQuery: searchController.searchQuery,
             isSearchEmailRunning: isSearchActive,

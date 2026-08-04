@@ -1,9 +1,11 @@
 import 'package:collection/collection.dart';
 import 'package:equatable/equatable.dart';
+import 'package:jmap_dart_client/jmap/account_id.dart';
 import 'package:jmap_dart_client/jmap/core/id.dart';
 import 'package:jmap_dart_client/jmap/mail/mailbox/mailbox.dart';
 import 'package:model/extensions/presentation_mailbox_extension.dart';
 import 'package:model/mailbox/expand_mode.dart';
+import 'package:model/mailbox/mailbox_identity.dart';
 import 'package:model/mailbox/mailbox_state.dart';
 import 'package:model/mailbox/presentation_mailbox.dart';
 import 'package:model/mailbox/select_mode.dart';
@@ -57,17 +59,26 @@ class MailboxNode with EquatableMixin {
     item = newItem;
   }
 
-  List<MailboxNode>? updateNode(MailboxId mailboxId, MailboxNode newNode, {MailboxNode? parent}) {
+  List<MailboxNode>? updateNode(
+    MailboxIdentity identity,
+    MailboxNode newNode, {
+    AccountId? primaryAccountId,
+    MailboxNode? parent,
+  }) {
     List<MailboxNode>? children = parent == null ? childrenItems : parent.childrenItems;
     return children?.map((MailboxNode child) {
-      if (child.item.id == mailboxId) {
+      if (MailboxIdentity.fromMailbox(
+            child.item,
+            primaryAccountId: primaryAccountId,
+          ) == identity) {
         return newNode;
       } else {
         if (child.hasChildren()) {
           return child.copyWith(
             children: updateNode(
-              mailboxId,
+              identity,
               newNode,
+              primaryAccountId: primaryAccountId,
               parent: child,
             ),
           );
@@ -95,14 +106,29 @@ class MailboxNode with EquatableMixin {
     }
   }
 
-  List<MailboxNode>? toggleSelectNode(MailboxNode selectedMailboxMode, {MailboxNode? parent}) {
+  List<MailboxNode>? toggleSelectNode(
+    MailboxNode selectedMailboxMode, {
+    AccountId? primaryAccountId,
+    MailboxNode? parent,
+  }) {
+    final selectedIdentity = MailboxIdentity.fromMailbox(
+      selectedMailboxMode.item,
+      primaryAccountId: primaryAccountId,
+    );
     List<MailboxNode>? children = parent == null ? childrenItems : parent.childrenItems;
     return children?.map((MailboxNode child) {
-      if (child.item.id == selectedMailboxMode.item.id) {
+      if (MailboxIdentity.fromMailbox(
+            child.item,
+            primaryAccountId: primaryAccountId,
+          ) == selectedIdentity) {
         return child.toggleSelectMailboxNode();
       } else {
         if (child.hasChildren()) {
-          return child.copyWith(children: toggleSelectNode(selectedMailboxMode, parent: child));
+          return child.copyWith(children: toggleSelectNode(
+            selectedMailboxMode,
+            primaryAccountId: primaryAccountId,
+            parent: child,
+          ));
         }
         return child;
       }

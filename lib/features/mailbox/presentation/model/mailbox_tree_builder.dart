@@ -7,6 +7,7 @@ import 'package:jmap_dart_client/jmap/mail/mailbox/mailbox.dart';
 import 'package:model/extensions/mailbox_name_extension.dart';
 import 'package:model/extensions/presentation_mailbox_extension.dart';
 import 'package:model/mailbox/expand_mode.dart';
+import 'package:model/mailbox/mailbox_identity.dart';
 import 'package:model/mailbox/mailbox_state.dart';
 import 'package:model/mailbox/presentation_mailbox.dart';
 import 'package:model/mailbox/select_mode.dart';
@@ -16,13 +17,13 @@ import 'mailbox_node.dart';
 import 'mailbox_tree.dart';
 
 class TreeBuilder {
-  String _mailboxKey(PresentationMailbox mailbox) =>
-      '${mailbox.accountId?.id.value ?? 'primary'}:${mailbox.id.id.value}';
+  MailboxIdentity _mailboxKey(PresentationMailbox mailbox) =>
+      MailboxIdentity.fromMailbox(mailbox);
 
-  String _parentMailboxKey(PresentationMailbox mailbox, MailboxId parentId) =>
-      '${mailbox.accountId?.id.value ?? 'primary'}:${parentId.id.value}';
-
-  String _sharedAccountKey(AccountId accountId) => accountId.id.value;
+  MailboxIdentity _parentMailboxKey(
+    PresentationMailbox mailbox,
+    MailboxId parentId,
+  ) => MailboxIdentity(mailbox.accountId, parentId);
 
   PresentationMailbox _createSharedAccountRoot(
     AccountId accountId,
@@ -40,17 +41,17 @@ class TreeBuilder {
     );
   }
 
-  Map<String, MailboxNode> _createSharedAccountNodes({
+  Map<AccountId, MailboxNode> _createSharedAccountNodes({
     required List<PresentationMailbox> mailboxes,
-    required Map<String, MailboxNode> nodeLookup,
+    required Map<MailboxIdentity, MailboxNode> nodeLookup,
   }) {
-    final sharedAccountNodes = <String, MailboxNode>{};
+    final sharedAccountNodes = <AccountId, MailboxNode>{};
 
     for (final mailbox in mailboxes) {
       final accountId = mailbox.accountId;
       if (!mailbox.isSharedAccount || accountId == null) continue;
 
-      sharedAccountNodes.putIfAbsent(_sharedAccountKey(accountId), () {
+      sharedAccountNodes.putIfAbsent(accountId, () {
         final accountRoot = _createSharedAccountRoot(
           accountId,
           mailbox.sharedAccountName,
@@ -69,7 +70,7 @@ class TreeBuilder {
   }
 
   void _attachSharedAccountNodes({
-    required Map<String, MailboxNode> accountNodes,
+    required Map<AccountId, MailboxNode> accountNodes,
     required MailboxTree teamMailboxTree,
   }) {
     for (final accountNode in accountNodes.values) {
@@ -83,7 +84,7 @@ class TreeBuilder {
     MailboxId? mailboxIdSelected,
     MailboxId? mailboxIdExpanded,
   }) async {
-    final Map<String, MailboxNode> mailboxDictionary = HashMap();
+    final Map<MailboxIdentity, MailboxNode> mailboxDictionary = HashMap();
 
     final newDefaultTree = MailboxTree(MailboxNode.root());
     final newPersonalTree = MailboxTree(MailboxNode.root());
@@ -146,7 +147,7 @@ class TreeBuilder {
     required List<PresentationMailbox> allMailboxes,
     required MailboxCollection currentCollection,
   }) async {
-    final Map<String, MailboxNode> mailboxDictionary = HashMap();
+    final Map<MailboxIdentity, MailboxNode> mailboxDictionary = HashMap();
 
     final newDefaultTree = MailboxTree(MailboxNode.root());
     final newPersonalTree = MailboxTree(MailboxNode.root());
@@ -201,8 +202,8 @@ class TreeBuilder {
   void _placeNodeInTree({
     required PresentationMailbox mailbox,
     required MailboxNode currentNode,
-    required Map<String, MailboxNode> mailboxDictionary,
-    required Map<String, MailboxNode> sharedAccountNodes,
+    required Map<MailboxIdentity, MailboxNode> mailboxDictionary,
+    required Map<AccountId, MailboxNode> sharedAccountNodes,
     required MailboxTree defaultTree,
     required MailboxTree personalTree,
     required MailboxTree teamMailboxTree,
@@ -210,7 +211,10 @@ class TreeBuilder {
   }) {
     final parentId = mailbox.parentId;
     final parentNode = parentId != null
-        ? mailboxDictionary[_parentMailboxKey(mailbox, parentId)]
+        ? mailboxDictionary[_parentMailboxKey(
+            mailbox,
+            parentId,
+          )]
         : null;
 
     if (parentNode != null) {
@@ -218,7 +222,7 @@ class TreeBuilder {
       parentNode.addChildNode(currentNode);
     } else if (mailbox.isSharedAccount && mailbox.accountId != null) {
       final accountRoot =
-          sharedAccountNodes[_sharedAccountKey(mailbox.accountId!)];
+          sharedAccountNodes[mailbox.accountId!];
 
       if (accountRoot != null) {
         accountRoot.addChildNode(currentNode);
@@ -321,8 +325,10 @@ class TreeBuilder {
 
   // Flattens all three trees into a single O(1) lookup map.
   // Avoids repeated O(n) DFS calls when resolving existing nodes for each mailbox.
-  Map<String, MailboxNode> _buildNodeLookup(MailboxCollection collection) {
-    final lookup = HashMap<String, MailboxNode>();
+  Map<MailboxIdentity, MailboxNode> _buildNodeLookup(
+    MailboxCollection collection,
+  ) {
+    final lookup = HashMap<MailboxIdentity, MailboxNode>();
     final stack = <MailboxNode>[
       ...?collection.defaultTree.root.childrenItems,
       ...?collection.personalTree.root.childrenItems,

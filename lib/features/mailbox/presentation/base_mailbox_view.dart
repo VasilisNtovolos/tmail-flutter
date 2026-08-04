@@ -206,6 +206,7 @@ abstract class BaseMailboxView extends GetWidget<MailboxController>
           .mailboxDashBoardController
           .selectedMailbox
           .value,
+        primaryAccountId: controller.accountId,
         isDraggingMailbox: controller
             .mailboxDashBoardController
             .isDraggingMailbox,

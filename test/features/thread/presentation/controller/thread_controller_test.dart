@@ -184,12 +184,19 @@ void main() {
       mockGetEmailByIdInteractor,
       mockCleanAndGetEmailsInMailboxInteractor,
     );
+    when(mockMailboxDashBoardController.mapMailboxByIdForAccount(any))
+        .thenReturn({});
   });
 
   group('ThreadController::test', () {
     group('validateListEmailsLoadMore::test', () {
       final MailboxId selectedMailboxId = MailboxId(Id('mailboxA'));
       final emailsInCurrentMailbox = <PresentationEmail>[];
+
+      setUp(() {
+        when(mockMailboxDashBoardController.accountId)
+            .thenReturn(Rxn(AccountFixtures.aliceAccountId));
+      });
 
       test('SHOULD returns filtered and synced emails', () {
         // Arrange
@@ -639,6 +646,79 @@ void main() {
       verifyNever(mockMailboxDashBoardController.updateEmailList(any));
       verifyNever(mockMailboxDashBoardController.updateRefreshAllEmailState(any));
       verifyNever(mockLoadMoreEmailsInMailboxInteractor.execute(any));
+    });
+
+    group('account-specific mailbox synchronization', () {
+      final duplicateId = MailboxId(Id('duplicate-mailbox'));
+      final primaryAccountId = AccountFixtures.aliceAccountId;
+      final sharedAccountId = AccountId(Id('shared-account'));
+      final primaryMailbox = PresentationMailbox(
+        duplicateId,
+        accountId: primaryAccountId,
+        name: MailboxName('Primary'),
+      );
+      final sharedMailbox = PresentationMailbox(
+        duplicateId,
+        accountId: sharedAccountId,
+        isSharedAccount: true,
+        name: MailboxName('Shared'),
+      );
+
+      void setupSynchronization(PresentationMailbox selectedMailbox) {
+        when(mockMailboxDashBoardController.accountId)
+            .thenReturn(Rxn(primaryAccountId));
+        when(mockMailboxDashBoardController.selectedMailbox)
+            .thenReturn(Rxn(selectedMailbox));
+        when(mockMailboxDashBoardController.searchController)
+            .thenReturn(mockSearchController);
+        when(mockSearchController.searchQuery).thenReturn(SearchQuery(''));
+        when(mockSearchController.isSearchEmailRunning).thenReturn(false);
+      }
+
+      test('shared response uses the originating shared account mailbox', () {
+        setupSynchronization(sharedMailbox);
+        when(mockMailboxDashBoardController
+                .mapMailboxByIdForAccount(sharedAccountId))
+            .thenReturn({duplicateId: sharedMailbox});
+        final success = GetAllEmailSuccess(
+          emailList: [PresentationEmail(
+            id: EmailId(Id('shared-email')),
+            mailboxIds: {duplicateId: true},
+          )],
+          currentMailboxId: duplicateId,
+          currentAccountId: sharedAccountId,
+        );
+
+        threadController.handleSuccessViewState(success);
+
+        final synchronized = verify(
+          mockMailboxDashBoardController.updateEmailList(captureAny),
+        ).captured.single as List<PresentationEmail>;
+        expect(synchronized.single.mailboxContain, sharedMailbox);
+        expect(synchronized.single.mailboxContain, isNot(primaryMailbox));
+      });
+
+      test('personal response keeps personal-account synchronization', () {
+        setupSynchronization(primaryMailbox);
+        when(mockMailboxDashBoardController
+                .mapMailboxByIdForAccount(primaryAccountId))
+            .thenReturn({duplicateId: primaryMailbox});
+        final success = GetAllEmailSuccess(
+          emailList: [PresentationEmail(
+            id: EmailId(Id('personal-email')),
+            mailboxIds: {duplicateId: true},
+          )],
+          currentMailboxId: duplicateId,
+          currentAccountId: primaryAccountId,
+        );
+
+        threadController.handleSuccessViewState(success);
+
+        final synchronized = verify(
+          mockMailboxDashBoardController.updateEmailList(captureAny),
+        ).captured.single as List<PresentationEmail>;
+        expect(synchronized.single.mailboxContain, primaryMailbox);
+      });
     });
 
     group('limitEmailFetched::test', () {

@@ -19,6 +19,7 @@ import 'package:jmap_dart_client/jmap/mail/mailbox/mailbox.dart';
 import 'package:mockito/annotations.dart';
 import 'package:mockito/mockito.dart';
 import 'package:model/mailbox/presentation_mailbox.dart';
+import 'package:model/mailbox/mailbox_identity.dart';
 import 'package:core/utils/platform_info.dart';
 import 'package:model/email/email_action_type.dart';
 import 'package:receive_sharing_intent/receive_sharing_intent.dart';
@@ -68,6 +69,8 @@ import 'package:tmail_ui_user/features/mailbox/domain/usecases/subscribe_mailbox
 import 'package:tmail_ui_user/features/mailbox/domain/usecases/subscribe_multiple_mailbox_interactor.dart';
 import 'package:tmail_ui_user/features/mailbox/presentation/mailbox_controller.dart';
 import 'package:tmail_ui_user/features/mailbox/presentation/model/mailbox_tree_builder.dart';
+import 'package:tmail_ui_user/features/mailbox/presentation/model/mailbox_node.dart';
+import 'package:tmail_ui_user/features/mailbox/presentation/model/mailbox_tree.dart';
 import 'package:tmail_ui_user/features/mailbox_creator/domain/usecases/verify_name_interactor.dart';
 import 'package:tmail_ui_user/features/mailbox_dashboard/domain/usecases/get_all_recent_search_latest_interactor.dart';
 import 'package:tmail_ui_user/features/mailbox_dashboard/domain/usecases/get_all_composer_cache_interactor.dart';
@@ -446,6 +449,202 @@ void main() {
       mailboxDashboardController.sessionCurrent = testSession;
       mailboxDashboardController.filterMessageOption.value = FilterMessageOption.all;
       mailboxDashboardController.accountId.value = testAccountId;
+    });
+
+    test('account-scoped map preserves collisions and selected reconciliation', () {
+      final duplicateId = MailboxId(Id('duplicate-mailbox'));
+      final sharedAccountId = AccountId(Id('shared-account'));
+      final primaryMailbox = PresentationMailbox(
+        duplicateId,
+        name: MailboxName('Primary'),
+      );
+      final sharedMailbox = PresentationMailbox(
+        duplicateId,
+        accountId: sharedAccountId,
+        isSharedAccount: true,
+        name: MailboxName('Shared refreshed'),
+      );
+      final uniqueSharedMailbox = PresentationMailbox(
+        MailboxId(Id('unique-shared-mailbox')),
+        accountId: sharedAccountId,
+        isSharedAccount: true,
+        name: MailboxName('Unique shared'),
+      );
+      mailboxController.allMailboxes = [
+        primaryMailbox,
+        sharedMailbox,
+        uniqueSharedMailbox,
+      ];
+
+      mailboxController.setMapMailboxForTesting();
+
+      expect(
+        mailboxDashboardController.mapMailboxByIdentity[
+          MailboxIdentity(testAccountId, duplicateId)
+        ],
+        primaryMailbox,
+      );
+      expect(
+        mailboxDashboardController.mapMailboxByIdentity[
+          MailboxIdentity(sharedAccountId, duplicateId)
+        ],
+        sharedMailbox,
+      );
+      expect(mailboxDashboardController.mapMailboxById[duplicateId], primaryMailbox);
+      expect(
+        mailboxDashboardController.mapMailboxById[uniqueSharedMailbox.id],
+        uniqueSharedMailbox,
+      );
+      expect(
+        mailboxDashboardController
+            .mapMailboxByIdForAccount(sharedAccountId)[duplicateId],
+        sharedMailbox,
+      );
+
+      mailboxDashboardController.selectedMailbox.value = PresentationMailbox(
+        duplicateId,
+        accountId: sharedAccountId,
+        isSharedAccount: true,
+        name: MailboxName('Shared stale'),
+      );
+      expect(mailboxController.getCurrentSelectedMailbox(), sharedMailbox);
+    });
+
+    test('shared role mailbox reconciliation does not use primary role map', () {
+      final primaryInbox = PresentationMailbox(
+        MailboxId(Id('primary-inbox')),
+        name: MailboxName('Primary Inbox'),
+        role: PresentationMailbox.roleInbox,
+      );
+      final sharedAccountId = AccountId(Id('shared-account'));
+      final sharedInboxId = MailboxId(Id('shared-inbox'));
+      final refreshedSharedInbox = PresentationMailbox(
+        sharedInboxId,
+        accountId: sharedAccountId,
+        isSharedAccount: true,
+        name: MailboxName('Shared Inbox refreshed'),
+        role: PresentationMailbox.roleInbox,
+      );
+      mailboxController.defaultMailboxTree.value = MailboxTree(
+        MailboxNode.root()..childrenItems = [MailboxNode(primaryInbox)],
+      );
+      mailboxController.allMailboxes = [primaryInbox, refreshedSharedInbox];
+      mailboxController.setMapMailboxForTesting();
+      mailboxDashboardController.selectedMailbox.value = PresentationMailbox(
+        sharedInboxId,
+        accountId: sharedAccountId,
+        isSharedAccount: true,
+        name: MailboxName('Shared Inbox stale'),
+        role: PresentationMailbox.roleInbox,
+      );
+
+      final reconciled = mailboxController.getCurrentSelectedMailbox();
+
+      expect(reconciled, refreshedSharedInbox);
+      expect(reconciled, isNot(primaryInbox));
+    });
+
+    test('account-scoped map removal preserves colliding accounts', () {
+      final duplicateId = MailboxId(Id('duplicate-mailbox'));
+      final sharedAccountId = AccountId(Id('shared-account'));
+      final primaryMailbox = PresentationMailbox(
+        duplicateId,
+        name: MailboxName('Primary'),
+      );
+      final sharedMailbox = PresentationMailbox(
+        duplicateId,
+        accountId: sharedAccountId,
+        isSharedAccount: true,
+        name: MailboxName('Shared'),
+      );
+      mailboxController.allMailboxes = [primaryMailbox, sharedMailbox];
+      mailboxController.setMapMailboxForTesting();
+
+      mailboxDashboardController.removeMailboxesFromMap(
+        sharedAccountId,
+        [duplicateId],
+      );
+
+      expect(
+        mailboxDashboardController.mapMailboxByIdentity[
+          MailboxIdentity(testAccountId, duplicateId)
+        ],
+        primaryMailbox,
+      );
+      expect(
+        mailboxDashboardController.mapMailboxByIdentity.containsKey(
+          MailboxIdentity(sharedAccountId, duplicateId),
+        ),
+        isFalse,
+      );
+      expect(mailboxDashboardController.mapMailboxById[duplicateId], primaryMailbox);
+    });
+
+    test('removing unique shared mailbox clears both maps', () {
+      final sharedAccountId = AccountId(Id('shared-account'));
+      final sharedMailbox = PresentationMailbox(
+        MailboxId(Id('unique-shared-mailbox')),
+        accountId: sharedAccountId,
+        isSharedAccount: true,
+        name: MailboxName('Shared'),
+      );
+      mailboxController.allMailboxes = [sharedMailbox];
+      mailboxController.setMapMailboxForTesting();
+
+      mailboxDashboardController.removeMailboxesFromMap(
+        sharedAccountId,
+        [sharedMailbox.id],
+      );
+
+      expect(
+        mailboxDashboardController.mapMailboxByIdentity.containsKey(
+          MailboxIdentity(sharedAccountId, sharedMailbox.id),
+        ),
+        isFalse,
+      );
+      expect(
+        mailboxDashboardController.mapMailboxById.containsKey(sharedMailbox.id),
+        isFalse,
+      );
+    });
+
+    test('removing primary mailbox preserves colliding shared identity', () {
+      final duplicateId = MailboxId(Id('duplicate-mailbox'));
+      final sharedAccountId = AccountId(Id('shared-account'));
+      final primaryMailbox = PresentationMailbox(
+        duplicateId,
+        name: MailboxName('Primary'),
+      );
+      final sharedMailbox = PresentationMailbox(
+        duplicateId,
+        accountId: sharedAccountId,
+        isSharedAccount: true,
+        name: MailboxName('Shared'),
+      );
+      mailboxController.allMailboxes = [primaryMailbox, sharedMailbox];
+      mailboxController.setMapMailboxForTesting();
+
+      mailboxDashboardController.removeMailboxesFromMap(
+        testAccountId,
+        [duplicateId],
+      );
+
+      expect(
+        mailboxDashboardController.mapMailboxByIdentity.containsKey(
+          MailboxIdentity(testAccountId, duplicateId),
+        ),
+        isFalse,
+      );
+      expect(
+        mailboxDashboardController.mapMailboxByIdentity[
+          MailboxIdentity(sharedAccountId, duplicateId)
+        ],
+        sharedMailbox,
+      );
+      expect(
+        mailboxDashboardController.mapMailboxById.containsKey(duplicateId),
+        isFalse,
+      );
     });
 
     test('WHEN user search email by keyword, '
@@ -1006,5 +1205,19 @@ void main() {
         verifyNever(composerManager.addComposer(any));
       },
     );
+  });
+
+  test('controller teardown clears legacy and account-scoped mailbox maps', () {
+    final mailboxId = MailboxId(Id('mailbox'));
+    final mailbox = PresentationMailbox(mailboxId);
+    mailboxDashboardController.mapMailboxById = {mailboxId: mailbox};
+    mailboxDashboardController.mapMailboxByIdentity = {
+      MailboxIdentity(testAccountId, mailboxId): mailbox,
+    };
+
+    mailboxDashboardController.onClose();
+
+    expect(mailboxDashboardController.mapMailboxById, isEmpty);
+    expect(mailboxDashboardController.mapMailboxByIdentity, isEmpty);
   });
 }

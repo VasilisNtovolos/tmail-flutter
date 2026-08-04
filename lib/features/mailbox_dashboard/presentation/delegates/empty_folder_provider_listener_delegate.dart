@@ -131,6 +131,7 @@ class EmptyFolderProviderListenerDelegate
         );
 
       case EmptyFolderSuccess(
+        :final accountId,
         :final clearedEmailIds,
         :final mailboxId,
         :final subfoldersStatus,
@@ -141,7 +142,10 @@ class EmptyFolderProviderListenerDelegate
         _stateSubscription = null;
         _resetProgress(dashboardController);
         _applyEmailChanges(dashboardController, clearedEmailIds, mailboxId);
-        dashboardController.removeMailboxesFromMap(deletedSubfolderIds);
+        dashboardController.removeMailboxesFromMap(
+          accountId,
+          deletedSubfolderIds,
+        );
         _showEmptyFolderSuccessToast(
           context,
           ref,

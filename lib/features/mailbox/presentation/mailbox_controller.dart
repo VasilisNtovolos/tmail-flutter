@@ -157,6 +157,9 @@ class MailboxController extends BaseMailboxController
 
   AccountId? get accountId => mailboxDashBoardController.accountId.value;
 
+  @override
+  AccountId? get primaryAccountIdForMailboxIdentity => accountId;
+
   Session? get session => mailboxDashBoardController.sessionCurrent;
 
   MailboxController(
@@ -845,14 +848,35 @@ class MailboxController extends BaseMailboxController
         mailboxNode.item.role!: mailboxNode.item.id,
     };
 
-    final mapMailboxById = {
+    final mapMailboxByIdentity = {
       for (var presentationMailbox in allMailboxes)
-        presentationMailbox.id: presentationMailbox,
+        mailboxIdentity(presentationMailbox): presentationMailbox,
     };
+    final mapMailboxById = <MailboxId, PresentationMailbox>{};
+    for (final presentationMailbox in allMailboxes) {
+      if (!presentationMailbox.isSharedAccount) {
+        mapMailboxById.putIfAbsent(
+          presentationMailbox.id,
+          () => presentationMailbox,
+        );
+      }
+    }
+    for (final presentationMailbox in allMailboxes) {
+      if (presentationMailbox.isSharedAccount) {
+        mapMailboxById.putIfAbsent(
+          presentationMailbox.id,
+          () => presentationMailbox,
+        );
+      }
+    }
 
     mailboxDashBoardController.setMapDefaultMailboxIdByRole(mapDefaultMailboxIdByRole,);
     mailboxDashBoardController.setMapMailboxById(mapMailboxById);
+    mailboxDashBoardController.setMapMailboxByIdentity(mapMailboxByIdentity);
   }
+
+  @visibleForTesting
+  void setMapMailboxForTesting() => _setMapMailbox();
 
   void _setOutboxMailbox() {
     try {
@@ -876,24 +900,27 @@ class MailboxController extends BaseMailboxController
       log('MailboxController::_selectMailboxDefault(): isSearchEmailRunning is $isSearchEmailRunning',);
       return;
     }
-    final mailboxSelected = _getCurrentSelectedMailbox();
+    final mailboxSelected = getCurrentSelectedMailbox();
     mailboxDashBoardController.setSelectedMailbox(mailboxSelected);
   }
 
-  PresentationMailbox? _getCurrentSelectedMailbox() {
+  @visibleForTesting
+  PresentationMailbox? getCurrentSelectedMailbox() {
     final mailboxCurrent = mailboxDashBoardController.selectedMailbox.value;
-    final mapMailboxById = mailboxDashBoardController.mapMailboxById;
+    final mapMailboxByIdentity =
+        mailboxDashBoardController.mapMailboxByIdentity;
     final isSearchEmailRunning = mailboxDashBoardController.searchController.isSearchEmailRunning;
     final mapDefaultPresentationMailboxByRole = defaultMailboxTree.value.mapPresentationMailboxByRole;
 
     if (mailboxCurrent != null) {
-      if (mailboxCurrent.hasRole()) {
+      if (mailboxCurrent.hasRole() && !mailboxCurrent.isSharedAccount) {
         return mapDefaultPresentationMailboxByRole.containsKey(mailboxCurrent.role,)
           ? mapDefaultPresentationMailboxByRole[mailboxCurrent.role]
           : mailboxCurrent;
       } else {
-        return mapMailboxById.containsKey(mailboxCurrent.id)
-          ? mapMailboxById[mailboxCurrent.id]
+        final identity = mailboxIdentity(mailboxCurrent);
+        return mapMailboxByIdentity.containsKey(identity)
+          ? mapMailboxByIdentity[identity]
           : mailboxCurrent;
       }
     } else if (!isSearchEmailRunning) {
@@ -1112,7 +1139,11 @@ class MailboxController extends BaseMailboxController
     log('MailboxController::_handleOpenMailbox():MAILBOX_ID = ${presentationMailboxSelected.id.asString} | MAILBOX_NAME: ${presentationMailboxSelected.name?.name}',);
     KeyboardUtils.hideKeyboard(context);
     mailboxDashBoardController.clearSelectedEmail();
-    if (presentationMailboxSelected.id != mailboxDashBoardController.selectedMailbox.value?.id) {
+    final currentSelectedMailbox =
+        mailboxDashBoardController.selectedMailbox.value;
+    if (currentSelectedMailbox == null ||
+        mailboxIdentity(presentationMailboxSelected) !=
+            mailboxIdentity(currentSelectedMailbox)) {
       mailboxDashBoardController.clearFilterMessageOption();
     }
     _disableAllSearchEmail();

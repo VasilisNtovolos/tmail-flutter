@@ -28,6 +28,7 @@ import 'package:jmap_dart_client/jmap/mail/vacation/vacation_response.dart';
 import 'package:jmap_dart_client/jmap/quotas/quota.dart';
 import 'package:labels/model/label.dart';
 import 'package:model/model.dart';
+import 'package:model/mailbox/mailbox_identity.dart';
 import 'package:receive_sharing_intent/receive_sharing_intent.dart';
 import 'package:rxdart/transformers.dart';
 import 'package:sentry_flutter/sentry_flutter.dart';
@@ -344,6 +345,7 @@ class MailboxDashBoardController extends ReloadableController
 
   Map<Role, MailboxId> mapDefaultMailboxIdByRole = {};
   Map<MailboxId, PresentationMailbox> mapMailboxById = {};
+  Map<MailboxIdentity, PresentationMailbox> mapMailboxByIdentity = {};
   final emailsInCurrentMailbox = <PresentationEmail>[].obs;
   final listResultSearch = RxList<PresentationEmail>();
   PresentationMailbox? outboxMailbox;
@@ -1023,10 +1025,36 @@ class MailboxDashBoardController extends ReloadableController
     mapMailboxById = newMapMailboxById;
   }
 
-  void removeMailboxesFromMap(List<MailboxId> mailboxIds) {
+  void setMapMailboxByIdentity(
+    Map<MailboxIdentity, PresentationMailbox> newMapMailboxByIdentity,
+  ) {
+    mapMailboxByIdentity = newMapMailboxByIdentity;
+  }
+
+  Map<MailboxId, PresentationMailbox> mapMailboxByIdForAccount(
+    AccountId accountId,
+  ) => {
+    for (final entry in mapMailboxByIdentity.entries)
+      if (entry.key.accountId == accountId)
+        entry.key.mailboxId: entry.value,
+  };
+
+  void removeMailboxesFromMap(
+    AccountId originatingAccountId,
+    List<MailboxId> mailboxIds,
+  ) {
     if (mailboxIds.isEmpty) return;
     for (final id in mailboxIds) {
-      mapMailboxById.remove(id);
+      final identity = MailboxIdentity(originatingAccountId, id);
+      mapMailboxByIdentity.remove(identity);
+      final legacyMailbox = mapMailboxById[id];
+      if (legacyMailbox != null &&
+          MailboxIdentity.fromMailbox(
+            legacyMailbox,
+            primaryAccountId: accountId.value,
+          ) == identity) {
+        mapMailboxById.remove(id);
+      }
     }
     selectedMailbox.refresh();
   }
@@ -3476,6 +3504,7 @@ class MailboxDashBoardController extends ReloadableController
     outboxMailbox = null;
     sessionCurrent = null;
     mapMailboxById = {};
+    mapMailboxByIdentity = {};
     mapDefaultMailboxIdByRole = {};
     WebSocketController.instance.onClose();
     _currentEmailState = null;

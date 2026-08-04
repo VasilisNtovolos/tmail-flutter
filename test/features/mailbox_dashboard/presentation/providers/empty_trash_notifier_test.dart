@@ -194,6 +194,7 @@ void main() {
           ]);
 
           final success = states.last as EmptyFolderSuccess;
+          expect(success.accountId, accountId);
           expect(success.subfoldersStatus, SubfoldersDeleteStatus.none);
           expect(success.mailboxId, trashMailboxId);
 
@@ -323,6 +324,7 @@ void main() {
         expect(states, [isA<EmptyFolderLoading>(), isA<EmptyFolderSuccess>()]);
 
         final success = states.last as EmptyFolderSuccess;
+        expect(success.accountId, accountId);
         expect(success.clearedEmailIds, emailIds);
         expect(success.mailboxId, trashMailboxId);
       });
