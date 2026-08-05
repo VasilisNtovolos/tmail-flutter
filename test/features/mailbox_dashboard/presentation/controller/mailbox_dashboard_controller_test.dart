@@ -24,6 +24,7 @@ import 'package:jmap_dart_client/jmap/core/user_name.dart';
 import 'package:jmap_dart_client/jmap/mail/email/email.dart';
 import 'package:jmap_dart_client/jmap/mail/email/email_address.dart';
 import 'package:jmap_dart_client/jmap/mail/mailbox/mailbox.dart';
+import 'package:jmap_dart_client/jmap/mail/mailbox/mailbox_rights.dart';
 import 'package:mockito/annotations.dart';
 import 'package:mockito/mockito.dart';
 import 'package:model/mailbox/presentation_mailbox.dart';
@@ -34,6 +35,7 @@ import 'package:receive_sharing_intent/receive_sharing_intent.dart';
 import 'package:rxdart/subjects.dart';
 import 'package:tmail_ui_user/features/email/presentation/model/composer_arguments.dart';
 import 'package:tmail_ui_user/features/base/extensions/handle_mailbox_action_type_extension.dart';
+import 'package:tmail_ui_user/features/base/base_mailbox_controller.dart';
 import 'package:tmail_ui_user/features/base/model/filter_filter.dart';
 import 'package:tmail_ui_user/features/caching/caching_manager.dart';
 import 'package:tmail_ui_user/features/composer/domain/usecases/send_email_interactor.dart';
@@ -73,6 +75,11 @@ import 'package:tmail_ui_user/features/mailbox/domain/usecases/move_mailbox_inte
 import 'package:tmail_ui_user/features/mailbox/domain/usecases/refresh_all_mailbox_interactor.dart';
 import 'package:tmail_ui_user/features/mailbox/domain/usecases/rename_mailbox_interactor.dart';
 import 'package:tmail_ui_user/features/mailbox/domain/usecases/subaddressing_interactor.dart';
+import 'package:tmail_ui_user/features/mailbox/domain/model/mailbox_right_request.dart';
+import 'package:tmail_ui_user/features/mailbox/domain/model/move_mailbox_request.dart';
+import 'package:tmail_ui_user/features/mailbox/domain/model/rename_mailbox_request.dart';
+import 'package:tmail_ui_user/features/mailbox/domain/model/create_new_mailbox_request.dart';
+import 'package:tmail_ui_user/features/mailbox/presentation/model/mailbox_actions.dart';
 import 'package:tmail_ui_user/features/mailbox/domain/usecases/subscribe_mailbox_interactor.dart';
 import 'package:tmail_ui_user/features/mailbox/domain/usecases/subscribe_multiple_mailbox_interactor.dart';
 import 'package:tmail_ui_user/features/mailbox/presentation/mailbox_controller.dart';
@@ -81,6 +88,8 @@ import 'package:tmail_ui_user/features/mailbox/presentation/model/mailbox_node.d
 import 'package:tmail_ui_user/features/mailbox/presentation/model/mailbox_collection.dart';
 import 'package:tmail_ui_user/features/mailbox/presentation/model/mailbox_tree.dart';
 import 'package:tmail_ui_user/features/mailbox_creator/domain/usecases/verify_name_interactor.dart';
+import 'package:tmail_ui_user/features/mailbox_creator/presentation/model/mailbox_creator_arguments.dart';
+import 'package:tmail_ui_user/features/mailbox_creator/presentation/model/new_mailbox_arguments.dart';
 import 'package:tmail_ui_user/features/mailbox_dashboard/domain/usecases/get_all_recent_search_latest_interactor.dart';
 import 'package:tmail_ui_user/features/mailbox_dashboard/domain/usecases/get_all_composer_cache_interactor.dart';
 import 'package:tmail_ui_user/features/mailbox_dashboard/domain/usecases/get_stored_email_sort_order_interactor.dart';
@@ -143,6 +152,78 @@ const fallbackGenerators = {
   #onStart: mockControllerCallback,
   #onDelete: mockControllerCallback,
 };
+
+class _TestMailboxController extends MailboxController {
+  DeleteMailboxActionCallback? deleteCallback;
+  RenameMailboxActionCallback? renameCallback;
+  MovingMailboxActionCallback? moveCallback;
+  AllowSubaddressingActionCallback? subaddressingCallback;
+  Completer<dynamic>? mailboxCreatorCompleter;
+
+  _TestMailboxController(
+    super.createNewMailboxInteractor,
+    super.deleteMultipleMailboxInteractor,
+    super.renameMailboxInteractor,
+    super.moveMailboxInteractor,
+    super.subscribeMailboxInteractor,
+    super.subscribeMultipleMailboxInteractor,
+    super.subaddressingInteractor,
+    super.createDefaultMailboxInteractor,
+    super.moveFolderContentInteractor,
+    super.treeBuilder,
+    super.verifyNameInteractor,
+    super.getAllMailboxInteractor,
+    super.refreshAllMailboxInteractor,
+  );
+
+  @override
+  void openConfirmationDialogDeleteMailboxAction(
+    BuildContext context,
+    ResponsiveUtils responsiveUtils,
+    ImagePaths imagePaths,
+    PresentationMailbox presentationMailbox, {
+    required DeleteMailboxActionCallback onDeleteMailboxAction,
+  }) {
+    deleteCallback = onDeleteMailboxAction;
+  }
+
+  @override
+  void openDialogRenameMailboxAction(
+    BuildContext context,
+    PresentationMailbox presentationMailbox,
+    ResponsiveUtils responsiveUtils, {
+    required RenameMailboxActionCallback onRenameMailboxAction,
+  }) {
+    renameCallback = onRenameMailboxAction;
+  }
+
+  @override
+  void moveMailboxAction(
+    BuildContext context,
+    PresentationMailbox mailboxSelected,
+    MailboxDashBoardController dashBoardController, {
+    required MovingMailboxActionCallback onMovingMailboxAction,
+  }) {
+    moveCallback = onMovingMailboxAction;
+  }
+
+  @override
+  Future<dynamic> openMailboxCreator(MailboxCreatorArguments arguments) {
+    mailboxCreatorCompleter = Completer<dynamic>();
+    return mailboxCreatorCompleter!.future;
+  }
+
+  @override
+  void openSubaddressingConfirmation(
+    BuildContext context,
+    PresentationMailbox mailbox,
+    String subAddress,
+    Map<String, List<String>?>? rights, {
+    required AllowSubaddressingActionCallback onAllowSubAddressingAction,
+  }) {
+    subaddressingCallback = onAllowSubAddressingAction;
+  }
+}
 
 @GenerateNiceMocks([
   // write mock specs for unavailable dependencies
@@ -1830,7 +1911,7 @@ void main() {
       Get.put(mailboxDashboardController);
       mailboxDashboardController.onReady();
 
-      mailboxController = MailboxController(
+      mailboxController = _TestMailboxController(
           createNewMailboxInteractor,
           deleteMultipleMailboxInteractor,
           renameMailboxInteractor,
@@ -1845,6 +1926,8 @@ void main() {
           getAllMailboxInteractor,
           refreshAllMailboxInteractor);
       mailboxController.onReady();
+      mailboxController.mailboxDashBoardController.sessionCurrent = testSession;
+      mailboxController.mailboxDashBoardController.accountId.value = testAccountId;
 
       threadController = ThreadController(
           getEmailsInMailboxInteractor,
@@ -1898,6 +1981,398 @@ void main() {
       const folderName = 'folder';
 
       expect(() => mailboxController.getSubAddress(userEmail, folderName), throwsA(isA<InvalidMailFormatException>()));
+    });
+
+    test('shared subaddressing dispatch uses the mailbox account', () async {
+      final sharedAccountId = AccountId(Id('shared-account'));
+      final sharedMailbox = PresentationMailbox(
+        MailboxId(Id('shared-mailbox')),
+        accountId: sharedAccountId,
+        isSharedAccount: true,
+      );
+      when(subaddressingInteractor.execute(any, any, any))
+          .thenAnswer((_) => const Stream.empty());
+
+      mailboxController.handleMailboxAction(
+        context,
+        MailboxActions.disallowSubaddressing,
+        sharedMailbox,
+      );
+
+      await untilCalled(subaddressingInteractor.execute(any, any, any));
+      final captured = verify(subaddressingInteractor.execute(
+        testSession,
+        captureAny,
+        captureAny,
+      )).captured;
+      expect(captured[0], sharedAccountId);
+      expect((captured[1] as MailboxRightRequest).mailboxId, sharedMailbox.id);
+    });
+
+    test('personal allow-subaddressing confirmation uses captured primary account', () async {
+      final mailbox = PresentationMailbox(
+        MailboxId(Id('personal-subaddress')),
+        name: MailboxName('Folder'),
+      );
+      final controller = mailboxController as _TestMailboxController;
+      controller.personalMailboxTree.value = MailboxTree(
+        MailboxNode.root()..childrenItems = [MailboxNode(mailbox)],
+      );
+      controller.mailboxDashBoardController.ownEmailAddress.value = 'user@example.com';
+      when(subaddressingInteractor.execute(any, any, any))
+          .thenAnswer((_) => const Stream.empty());
+
+      controller.handleMailboxAction(context, MailboxActions.allowSubaddressing, mailbox);
+      controller.subaddressingCallback!(mailbox.id, null, MailboxActions.allowSubaddressing);
+
+      final request = verify(subaddressingInteractor.execute(
+        testSession,
+        testAccountId,
+        captureAny,
+      )).captured.single as MailboxRightRequest;
+      expect(request.mailboxId, mailbox.id);
+    });
+
+    test('personal allow-subaddressing confirmation rejects stale context', () {
+      final mailbox = PresentationMailbox(
+        MailboxId(Id('stale-subaddress')),
+        name: MailboxName('Folder'),
+      );
+      final controller = mailboxController as _TestMailboxController;
+      controller.personalMailboxTree.value = MailboxTree(
+        MailboxNode.root()..childrenItems = [MailboxNode(mailbox)],
+      );
+      controller.mailboxDashBoardController.ownEmailAddress.value = 'user@example.com';
+      clearInteractions(subaddressingInteractor);
+      clearInteractions(appToast);
+
+      controller.handleMailboxAction(context, MailboxActions.allowSubaddressing, mailbox);
+      controller.mailboxDashBoardController.accountId.value = AccountId(Id('replacement'));
+      controller.subaddressingCallback!(mailbox.id, null, MailboxActions.allowSubaddressing);
+
+      verifyNever(subaddressingInteractor.execute(any, any, any));
+      verifyNever(appToast.showToastErrorMessage(any, any));
+      verifyNever(appToast.showToastSuccessMessage(any, any));
+    });
+
+    test('direct synthetic-root mutation dispatch invokes no interactor', () {
+      final sharedRoot = PresentationMailbox(
+        MailboxId(Id('shared-root')),
+        accountId: AccountId(Id('shared-account')),
+        isSharedAccount: true,
+        isSharedAccountRoot: true,
+      );
+      clearInteractions(deleteMultipleMailboxInteractor);
+      clearInteractions(renameMailboxInteractor);
+      clearInteractions(moveMailboxInteractor);
+      clearInteractions(createNewMailboxInteractor);
+      clearInteractions(subaddressingInteractor);
+      clearInteractions(subscribeMailboxInteractor);
+      clearInteractions(subscribeMultipleMailboxInteractor);
+
+      for (final action in [
+        MailboxActions.delete,
+        MailboxActions.rename,
+        MailboxActions.move,
+        MailboxActions.disallowSubaddressing,
+        MailboxActions.newSubfolder,
+        MailboxActions.disableMailbox,
+      ]) {
+        mailboxController.handleMailboxAction(context, action, sharedRoot);
+      }
+
+      verifyNever(deleteMultipleMailboxInteractor.execute(any, any, any));
+      verifyNever(renameMailboxInteractor.execute(any, any, any));
+      verifyNever(moveMailboxInteractor.execute(any, any, any));
+      verifyNever(subaddressingInteractor.execute(any, any, any));
+      verifyNever(subscribeMailboxInteractor.execute(any, any, any));
+      verifyNever(subscribeMultipleMailboxInteractor.execute(any, any, any));
+    });
+
+    test('direct dispatch rejects malformed shared and protected default mailboxes', () {
+      final malformedShared = PresentationMailbox(
+        MailboxId(Id('malformed-shared')),
+        isSharedAccount: true,
+      );
+      final protectedDefault = PresentationMailbox(
+        MailboxId(Id('default-inbox')),
+        role: PresentationMailbox.roleInbox,
+        myRights: MailboxRights(true, true, true, true, true, true, true, true, true),
+      );
+      clearInteractions(deleteMultipleMailboxInteractor);
+      clearInteractions(renameMailboxInteractor);
+      clearInteractions(moveMailboxInteractor);
+
+      for (final mailbox in [malformedShared, protectedDefault]) {
+        for (final action in [
+          MailboxActions.delete,
+          MailboxActions.rename,
+          MailboxActions.move,
+          MailboxActions.newSubfolder,
+        ]) {
+          mailboxController.handleMailboxAction(context, action, mailbox);
+        }
+      }
+
+      verifyNever(deleteMultipleMailboxInteractor.execute(any, any, any));
+      verifyNever(renameMailboxInteractor.execute(any, any, any));
+      verifyNever(moveMailboxInteractor.execute(any, any, any));
+      verifyNever(createNewMailboxInteractor.execute(any, any, any));
+    });
+
+    test('explicit denied mutation rights block direct dispatch', () {
+      final deniedMailbox = PresentationMailbox(
+        MailboxId(Id('denied')),
+        myRights: MailboxRights(true, true, true, true, true, false, false, false, true),
+      );
+      clearInteractions(deleteMultipleMailboxInteractor);
+      clearInteractions(renameMailboxInteractor);
+      clearInteractions(moveMailboxInteractor);
+      clearInteractions(createNewMailboxInteractor);
+
+      for (final action in [
+        MailboxActions.delete,
+        MailboxActions.rename,
+        MailboxActions.move,
+        MailboxActions.newSubfolder,
+      ]) {
+        mailboxController.handleMailboxAction(context, action, deniedMailbox);
+      }
+
+      verifyNever(deleteMultipleMailboxInteractor.execute(any, any, any));
+      verifyNever(renameMailboxInteractor.execute(any, any, any));
+      verifyNever(moveMailboxInteractor.execute(any, any, any));
+      verifyNever(createNewMailboxInteractor.execute(any, any, any));
+    });
+
+    test('shared delete callback uses the shared account', () async {
+      final sharedAccountId = AccountId(Id('shared-delete-account'));
+      final mailbox = PresentationMailbox(
+        MailboxId(Id('shared-delete')),
+        accountId: sharedAccountId,
+        isSharedAccount: true,
+        myRights: MailboxRights(true, true, true, true, true, true, true, true, true),
+      );
+      when(deleteMultipleMailboxInteractor.execute(any, any, any))
+          .thenAnswer((_) => const Stream.empty());
+
+      mailboxController.handleMailboxAction(context, MailboxActions.delete, mailbox);
+      final controller = mailboxController as _TestMailboxController;
+      controller.deleteCallback!(mailbox);
+
+      await untilCalled(deleteMultipleMailboxInteractor.execute(any, any, any));
+      verify(deleteMultipleMailboxInteractor.execute(
+        testSession,
+        sharedAccountId,
+        [mailbox.id],
+      )).called(1);
+    });
+
+    test('accountless personal delete callback uses captured primary account', () async {
+      final mailbox = PresentationMailbox(MailboxId(Id('personal-delete')));
+      when(deleteMultipleMailboxInteractor.execute(any, any, any))
+          .thenAnswer((_) => const Stream.empty());
+
+      mailboxController.handleMailboxAction(context, MailboxActions.delete, mailbox);
+      final controller = mailboxController as _TestMailboxController;
+      controller.deleteCallback!(mailbox);
+
+      await untilCalled(deleteMultipleMailboxInteractor.execute(any, any, any));
+      verify(deleteMultipleMailboxInteractor.execute(
+        testSession,
+        testAccountId,
+        [mailbox.id],
+      )).called(1);
+    });
+
+    test('delete callback rejects a changed primary account', () {
+      final mailbox = PresentationMailbox(MailboxId(Id('stale-delete')));
+      clearInteractions(deleteMultipleMailboxInteractor);
+
+      mailboxController.handleMailboxAction(context, MailboxActions.delete, mailbox);
+      final controller = mailboxController as _TestMailboxController;
+      controller.mailboxDashBoardController.sessionCurrent = null;
+      controller.deleteCallback!(mailbox);
+
+      verifyNever(deleteMultipleMailboxInteractor.execute(any, any, any));
+    });
+
+    test('shared rename callback uses the shared account', () async {
+      final sharedAccountId = AccountId(Id('shared-rename-account'));
+      final mailbox = PresentationMailbox(
+        MailboxId(Id('shared-rename')),
+        accountId: sharedAccountId,
+        isSharedAccount: true,
+        myRights: MailboxRights(true, true, true, true, true, true, true, true, true),
+      );
+      final newName = MailboxName('renamed');
+      when(renameMailboxInteractor.execute(any, any, any))
+          .thenAnswer((_) => const Stream.empty());
+
+      mailboxController.handleMailboxAction(context, MailboxActions.rename, mailbox);
+      final controller = mailboxController as _TestMailboxController;
+      controller.renameCallback!(mailbox, newName);
+
+      await untilCalled(renameMailboxInteractor.execute(any, any, any));
+      final captured = verify(renameMailboxInteractor.execute(
+        testSession,
+        sharedAccountId,
+        captureAny,
+      )).captured.single as RenameMailboxRequest;
+      expect(captured.mailboxId, mailbox.id);
+      expect(captured.newName, newName);
+    });
+
+    test('accountless personal rename uses captured primary and rejects stale context', () async {
+      final mailbox = PresentationMailbox(MailboxId(Id('personal-rename')));
+      when(renameMailboxInteractor.execute(any, any, any))
+          .thenAnswer((_) => const Stream.empty());
+
+      mailboxController.handleMailboxAction(context, MailboxActions.rename, mailbox);
+      final controller = mailboxController as _TestMailboxController;
+      controller.renameCallback!(mailbox, MailboxName('first'));
+
+      await untilCalled(renameMailboxInteractor.execute(any, any, any));
+      verify(renameMailboxInteractor.execute(testSession, testAccountId, any)).called(1);
+      clearInteractions(renameMailboxInteractor);
+      mailboxController.handleMailboxAction(context, MailboxActions.rename, mailbox);
+      controller.mailboxDashBoardController.sessionCurrent = null;
+      controller.renameCallback!(mailbox, MailboxName('stale'));
+      verifyNever(renameMailboxInteractor.execute(any, any, any));
+    });
+
+    test('move callback keeps the shared source account with a colliding ID', () async {
+      final sharedAccountId = AccountId(Id('shared-move-account'));
+      final duplicateId = MailboxId(Id('duplicate-move'));
+      final source = PresentationMailbox(
+        duplicateId,
+        accountId: sharedAccountId,
+        isSharedAccount: true,
+        myRights: MailboxRights(true, true, true, true, true, true, true, true, true),
+      );
+      when(moveMailboxInteractor.execute(any, any, any))
+          .thenAnswer((_) => const Stream.empty());
+
+      mailboxController.handleMailboxAction(context, MailboxActions.move, source);
+      final controller = mailboxController as _TestMailboxController;
+      controller.moveCallback!(sharedAccountId, source, null);
+
+      await untilCalled(moveMailboxInteractor.execute(any, any, any));
+      final captured = verify(moveMailboxInteractor.execute(
+        testSession,
+        sharedAccountId,
+        captureAny,
+      )).captured.single as MoveMailboxRequest;
+      expect(captured.mailboxId, duplicateId);
+      expect(captured.destinationMailboxId, isNull);
+    });
+
+    test('move callback to account root sends a null destination', () async {
+      final sharedAccountId = AccountId(Id('shared-root-move-account'));
+      final source = PresentationMailbox(
+        MailboxId(Id('shared-root-move')),
+        accountId: sharedAccountId,
+        isSharedAccount: true,
+        myRights: MailboxRights(true, true, true, true, true, true, true, true, true),
+      );
+      when(moveMailboxInteractor.execute(any, any, any))
+          .thenAnswer((_) => const Stream.empty());
+
+      mailboxController.handleMailboxAction(context, MailboxActions.move, source);
+      final controller = mailboxController as _TestMailboxController;
+      controller.moveCallback!(sharedAccountId, source, null);
+
+      await untilCalled(moveMailboxInteractor.execute(any, any, any));
+      final captured = verify(moveMailboxInteractor.execute(
+        testSession,
+        sharedAccountId,
+        captureAny,
+      )).captured.single as MoveMailboxRequest;
+      expect(captured.destinationMailboxId, isNull);
+    });
+
+    test('shared child creation keeps captured account and parent', () async {
+      final sharedAccountId = AccountId(Id('shared-create-account'));
+      final parent = PresentationMailbox(
+        MailboxId(Id('shared-parent')),
+        accountId: sharedAccountId,
+        isSharedAccount: true,
+        myRights: MailboxRights(true, true, true, true, true, true, true, true, true),
+      );
+      when(createNewMailboxInteractor.execute(any, any, any))
+          .thenAnswer((_) => const Stream.empty());
+      final controller = mailboxController as _TestMailboxController;
+
+      controller.goToCreateNewMailboxView(context, parentMailbox: parent);
+      await Future<void>.delayed(Duration.zero);
+      controller.mailboxCreatorCompleter!.complete(
+        NewMailboxArguments(MailboxName('child'), mailboxLocation: parent),
+      );
+      await Future<void>.delayed(Duration.zero);
+
+      final request = verify(createNewMailboxInteractor.execute(
+        testSession,
+        sharedAccountId,
+        captureAny,
+      )).captured.single as CreateNewMailboxRequest;
+      expect(request.parentId, parent.id);
+    });
+
+    test('accountless personal child creation uses captured primary account', () async {
+      final parent = PresentationMailbox(MailboxId(Id('personal-parent')));
+      when(createNewMailboxInteractor.execute(any, any, any))
+          .thenAnswer((_) => const Stream.empty());
+      final controller = mailboxController as _TestMailboxController;
+
+      controller.goToCreateNewMailboxView(context, parentMailbox: parent);
+      await Future<void>.delayed(Duration.zero);
+      controller.mailboxCreatorCompleter!.complete(
+        NewMailboxArguments(MailboxName('child'), mailboxLocation: parent),
+      );
+      await Future<void>.delayed(Duration.zero);
+
+      verify(createNewMailboxInteractor.execute(testSession, testAccountId, any)).called(1);
+    });
+
+    test('child creation rejects result after session replacement', () async {
+      final parent = PresentationMailbox(MailboxId(Id('stale-parent')));
+      clearInteractions(createNewMailboxInteractor);
+      final controller = mailboxController as _TestMailboxController;
+
+      controller.goToCreateNewMailboxView(context, parentMailbox: parent);
+      await Future<void>.delayed(Duration.zero);
+      controller.mailboxDashBoardController.sessionCurrent = null;
+      controller.mailboxCreatorCompleter!.complete(
+        NewMailboxArguments(MailboxName('child'), mailboxLocation: parent),
+      );
+      await Future<void>.delayed(Duration.zero);
+
+      verifyNever(createNewMailboxInteractor.execute(any, any, any));
+    });
+
+    test('top-level creation uses captured primary and rejects stale result', () async {
+      when(createNewMailboxInteractor.execute(any, any, any))
+          .thenAnswer((_) => const Stream.empty());
+      final controller = mailboxController as _TestMailboxController;
+
+      controller.goToCreateNewMailboxView(context);
+      await Future<void>.delayed(Duration.zero);
+      controller.mailboxCreatorCompleter!.complete(NewMailboxArguments(MailboxName('top')));
+      await Future<void>.delayed(Duration.zero);
+      final request = verify(createNewMailboxInteractor.execute(
+        testSession,
+        testAccountId,
+        captureAny,
+      )).captured.single as CreateNewMailboxRequest;
+      expect(request.parentId, isNull);
+
+      clearInteractions(createNewMailboxInteractor);
+      controller.goToCreateNewMailboxView(context);
+      await Future<void>.delayed(Duration.zero);
+      controller.mailboxDashBoardController.accountId.value = AccountId(Id('new-primary'));
+      controller.mailboxCreatorCompleter!.complete(NewMailboxArguments(MailboxName('stale')));
+      await Future<void>.delayed(Duration.zero);
+      verifyNever(createNewMailboxInteractor.execute(any, any, any));
     });
   });
 

@@ -31,7 +31,7 @@ mixin MailboxWidgetMixin {
     return [
       if (PlatformInfo.isWeb)
         MailboxActions.openInNewTab,
-      if (!mailbox.isRecovered)
+      if (!mailbox.isRecovered && mailbox.myRights?.mayCreateChild != false)
         MailboxActions.newSubfolder,
       MailboxActions.createFilter,
       if (mailbox.isTrash)
@@ -60,13 +60,16 @@ mixin MailboxWidgetMixin {
     return [
       if (PlatformInfo.isWeb && mailbox.isSubscribedMailbox)
         MailboxActions.openInNewTab,
-      MailboxActions.newSubfolder,
+      if (mailbox.myRights?.mayCreateChild != false)
+        MailboxActions.newSubfolder,
       MailboxActions.createFilter,
       if (mailbox.countUnReadEmailsAsString.isNotEmpty)
         MailboxActions.markAsRead,
-      MailboxActions.move,
+      if (mailbox.myRights?.mayRename != false)
+        MailboxActions.move,
       MailboxActions.moveFolderContent,
-      MailboxActions.rename,
+      if (mailbox.myRights?.mayRename != false)
+        MailboxActions.rename,
       if (subaddressingSupported) ...[
         if (mailbox.isSubaddressingAllowed)
           MailboxActions.disallowSubaddressing
@@ -79,7 +82,8 @@ mixin MailboxWidgetMixin {
         MailboxActions.disableMailbox
       else
         MailboxActions.enableMailbox,
-      MailboxActions.delete
+      if (mailbox.myRights?.mayDelete != false)
+        MailboxActions.delete
     ];
   }
 
@@ -111,6 +115,7 @@ mixin MailboxWidgetMixin {
     bool deletedMessageVaultSupported,
     bool isSubAddressingSupported,
   ) {
+    if (mailbox.isSharedAccountRoot) return [];
     if (mailbox.isDefault) {
       return _listActionForDefaultMailbox(
         mailbox,

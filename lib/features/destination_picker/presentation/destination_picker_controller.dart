@@ -366,6 +366,23 @@ class DestinationPickerController extends BaseMailboxController {
 
     final nameMailbox = newNameMailbox.value;
     if (nameMailbox != null && nameMailbox.isNotEmpty) {
+      final selectedParent = mailboxDestination.value;
+      final isTopLevel = selectedParent == null
+          || selectedParent == PresentationMailbox.unifiedMailbox;
+      if (!isTopLevel) {
+        if (selectedParent.isSharedAccountRoot
+            || selectedParent.myRights?.mayCreateChild != true) {
+          return;
+        }
+        final selectedParentIdentity = BaseMailboxController.resolveActionableMailboxIdentity(
+          selectedParent,
+          accountId,
+        );
+        if (selectedParentIdentity == null
+            || selectedParentIdentity.accountId != accountId) {
+          return;
+        }
+      }
       final parentId = mailboxDestination.value == PresentationMailbox.unifiedMailbox
         ? null
         : mailboxDestination.value?.id;

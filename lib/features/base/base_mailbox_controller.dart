@@ -56,7 +56,7 @@ import 'package:tmail_ui_user/main/routes/dialog_router.dart';
 import 'package:tmail_ui_user/main/routes/route_navigation.dart';
 
 typedef RenameMailboxActionCallback = void Function(PresentationMailbox mailbox, MailboxName newMailboxName);
-typedef MovingMailboxActionCallback = void Function(PresentationMailbox mailboxSelected, PresentationMailbox? destinationMailbox);
+typedef MovingMailboxActionCallback = void Function(AccountId accountId, PresentationMailbox mailboxSelected, PresentationMailbox? destinationMailbox);
 typedef OnMoveFolderContentActionCallback = void Function(
   PresentationMailbox currentMailbox,
   PresentationMailbox destinationMailbox,
@@ -97,6 +97,40 @@ abstract class BaseMailboxController extends BaseController
         mailbox,
         primaryAccountId: primaryAccountIdForMailboxIdentity,
       );
+
+  MailboxIdentity? actionableMailboxIdentity(PresentationMailbox mailbox) {
+    return resolveActionableMailboxIdentity(
+      mailbox,
+      primaryAccountIdForMailboxIdentity,
+    );
+  }
+
+  static MailboxIdentity? resolveActionableMailboxIdentity(
+    PresentationMailbox mailbox,
+    AccountId? primaryAccountId,
+  ) {
+    if (mailbox.isSharedAccountRoot) return null;
+    try {
+      final identity = MailboxIdentity.fromMailbox(
+        mailbox,
+        primaryAccountId: primaryAccountId,
+      );
+      return identity.accountId == null ? null : identity;
+    } on StateError {
+      return null;
+    }
+  }
+
+  bool isMailboxMutationAllowed(
+    PresentationMailbox mailbox,
+    bool? right,
+  ) => actionableMailboxIdentity(mailbox) != null
+      && (right == true || (mailbox.isPersonal && right == null));
+
+  static MailboxIdentity? resolveMoveDestinationIdentity(
+    PresentationMailbox destination,
+    AccountId sourceAccountId,
+  ) => resolveActionableMailboxIdentity(destination, sourceAccountId);
 
   MailboxCollection get currentMailboxCollection => MailboxCollection(
     allMailboxes: allMailboxes,
@@ -504,9 +538,13 @@ abstract class BaseMailboxController extends BaseController
     MailboxDashBoardController dashBoardController, {
     required MovingMailboxActionCallback onMovingMailboxAction
   }) async {
-    final accountId = dashBoardController.accountId.value;
+    final sourceIdentity = actionableMailboxIdentity(mailboxSelected);
+    final accountId = sourceIdentity?.accountId;
     final session = dashBoardController.sessionCurrent;
-    if (accountId != null && session != null) {
+    final primaryAccountId = dashBoardController.accountId.value;
+    if (accountId != null
+        && session != null
+        && isMailboxMutationAllowed(mailboxSelected, mailboxSelected.myRights?.mayRename)) {
 
       final arguments = DestinationPickerArguments(
         accountId,
@@ -515,20 +553,42 @@ abstract class BaseMailboxController extends BaseController
         mailboxIdSelected: mailboxSelected.id
       );
 
-      final destinationMailbox = PlatformInfo.isWeb
-        ? await DialogRouter().pushGeneralDialog(routeName: AppRoutes.destinationPicker, arguments: arguments)
-        : await push(AppRoutes.destinationPicker, arguments: arguments);
+      final destinationMailbox = await openDestinationPicker(arguments);
+
+      if (!identical(dashBoardController.sessionCurrent, session)
+          || dashBoardController.accountId.value != primaryAccountId) {
+        return;
+      }
 
       if (destinationMailbox is PresentationMailbox) {
-        onMovingMailboxAction(
-          mailboxSelected,
-          destinationMailbox == PresentationMailbox.unifiedMailbox
+        final realDestination = destinationMailbox == PresentationMailbox.unifiedMailbox
             ? null
-            : destinationMailbox
+            : destinationMailbox;
+        if (realDestination?.isSharedAccountRoot == true) return;
+        if (realDestination != null) {
+          final destinationIdentity = BaseMailboxController.resolveMoveDestinationIdentity(
+            realDestination,
+            accountId,
+          );
+          if (destinationIdentity?.accountId != accountId) return;
+        }
+        onMovingMailboxAction(
+          accountId,
+          mailboxSelected,
+          realDestination,
         );
       }
     }
   }
+
+  Future<dynamic> openDestinationPicker(
+    DestinationPickerArguments arguments,
+  ) => PlatformInfo.isWeb
+      ? DialogRouter().pushGeneralDialog(
+          routeName: AppRoutes.destinationPicker,
+          arguments: arguments,
+        )
+      : push(AppRoutes.destinationPicker, arguments: arguments);
 
   void openConfirmationDialogDeleteMailboxAction(
     BuildContext context,
@@ -572,23 +632,27 @@ abstract class BaseMailboxController extends BaseController
   }
 
   SubscribeRequest? generateSubscribeRequest(
-    MailboxId mailboxId,
+    PresentationMailbox mailbox,
+    AccountId originatingAccountId,
     MailboxSubscribeState subscribeState,
     MailboxSubscribeAction subscribeAction
   ) {
     switch(subscribeState) {
       case MailboxSubscribeState.enabled:
-        return _generateSubscribeRequestWhenSubscribeEnabled(mailboxId, subscribeAction);
+        return _generateSubscribeRequestWhenSubscribeEnabled(mailbox, originatingAccountId, subscribeAction);
       case MailboxSubscribeState.disabled:
-        return _generateSubscribeRequestWhenSubscribeDisabled(mailboxId, subscribeAction);
+        return _generateSubscribeRequestWhenSubscribeDisabled(mailbox, originatingAccountId, subscribeAction);
     }
   }
 
   SubscribeRequest? _generateSubscribeRequestWhenSubscribeDisabled(
-    MailboxId mailboxId,
+    PresentationMailbox mailbox,
+    AccountId originatingAccountId,
     MailboxSubscribeAction subscribeAction
   ) {
-    final mailboxNode = findMailboxNodeById(mailboxId);
+    final identity = actionableMailboxIdentity(mailbox);
+    if (identity?.accountId != originatingAccountId) return null;
+    final mailboxNode = findMailboxNodeByIdentity(identity!);
 
     if (mailboxNode == null) return null;
 
@@ -596,14 +660,14 @@ abstract class BaseMailboxController extends BaseController
       final listDescendantMailboxIds = mailboxNode.descendantsAsList().mailboxIds;
       log("BaseMailboxController::_generateSubscribeRequestWhenSubscribeDisabled:listDescendantMailboxIds $listDescendantMailboxIds");
       return SubscribeMultipleMailboxRequest(
-        mailboxId,
+        mailbox.id,
         listDescendantMailboxIds,
         MailboxSubscribeState.disabled,
         subscribeAction
       );
     } else {
       return SubscribeMailboxRequest(
-        mailboxId,
+        mailbox.id,
         MailboxSubscribeState.disabled,
         subscribeAction
       );
@@ -611,34 +675,37 @@ abstract class BaseMailboxController extends BaseController
   }
 
   SubscribeRequest? _generateSubscribeRequestWhenSubscribeEnabled(
-    MailboxId mailboxId,
+    PresentationMailbox mailbox,
+    AccountId originatingAccountId,
     MailboxSubscribeAction subscribeAction
   ) {
-    final mailboxNode = findMailboxNodeById(mailboxId);
+    final identity = actionableMailboxIdentity(mailbox);
+    if (identity?.accountId != originatingAccountId) return null;
+    final mailboxNode = findMailboxNodeByIdentity(identity!);
 
     if (mailboxNode == null) return null;
 
     if (mailboxNode.hasParents()) {
       final listAncestorMailboxIds = getAncestorOfMailboxNode(mailboxNode).mailboxIds;
-      listAncestorMailboxIds.add(mailboxId);
+      listAncestorMailboxIds.add(mailbox.id);
       log("BaseMailboxController::_generateSubscribeRequestWhenSubscribeEnabled:listAncestorMailboxIds $listAncestorMailboxIds");
       if (listAncestorMailboxIds.isNotEmpty) {
         return SubscribeMultipleMailboxRequest(
-          mailboxId,
+          mailbox.id,
           listAncestorMailboxIds,
           MailboxSubscribeState.enabled,
           subscribeAction
         );
       } else {
         return SubscribeMailboxRequest(
-          mailboxId,
+          mailbox.id,
           MailboxSubscribeState.enabled,
           subscribeAction
         );
       }
     } else {
       return SubscribeMailboxRequest(
-        mailboxId,
+        mailbox.id,
         MailboxSubscribeState.enabled,
         subscribeAction
       );

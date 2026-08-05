@@ -17,6 +17,7 @@ import 'package:jmap_dart_client/jmap/mail/mailbox/mailbox.dart';
 import 'package:model/email/presentation_email.dart';
 import 'package:model/extensions/list_presentation_mailbox_extension.dart';
 import 'package:model/extensions/presentation_email_extension.dart';
+import 'package:model/extensions/presentation_mailbox_extension.dart';
 import 'package:model/mailbox/presentation_mailbox.dart';
 import 'package:tmail_ui_user/features/base/base_mailbox_controller.dart';
 import 'package:tmail_ui_user/features/base/extensions/handle_mailbox_action_type_extension.dart';
@@ -104,6 +105,9 @@ class SearchMailboxController extends BaseMailboxController with MailboxActionHa
   PresentationEmail? get selectedEmail => dashboardController.selectedEmail.value;
 
   AccountId? get accountId => dashboardController.accountId.value;
+
+  @override
+  AccountId? get primaryAccountIdForMailboxIdentity => accountId;
 
   Session? get session => dashboardController.sessionCurrent;
 
@@ -353,6 +357,10 @@ class SearchMailboxController extends BaseMailboxController with MailboxActionHa
     MailboxActions actions,
     PresentationMailbox mailbox,
   ) {
+    if (mailbox.isSharedAccountRoot) return;
+    final operationSession = session;
+    final primaryAccountId = accountId;
+    final identity = actionableMailboxIdentity(mailbox);
     switch(actions) {
       case MailboxActions.openInNewTab:
         openMailboxInNewTabAction(mailbox);
@@ -366,40 +374,68 @@ class SearchMailboxController extends BaseMailboxController with MailboxActionHa
         markAsReadMailboxAction(context, mailbox, dashboardController);
         break;
       case MailboxActions.rename:
+        if (mailbox.isDefault
+            || operationSession == null
+            || identity?.accountId == null
+            || !isMailboxMutationAllowed(mailbox, mailbox.myRights?.mayRename)) {
+          return;
+        }
         openDialogRenameMailboxAction(
           context,
           mailbox,
           responsiveUtils,
-          onRenameMailboxAction: _renameMailboxAction
+          onRenameMailboxAction: (selectedMailbox, name) =>
+              _renameMailboxAction(
+                selectedMailbox,
+                name,
+                operationSession,
+                identity!.accountId!,
+                primaryAccountId,
+              )
         );
         break;
       case MailboxActions.move:
+        if (mailbox.isDefault
+            || !isMailboxMutationAllowed(mailbox, mailbox.myRights?.mayRename)) {
+          return;
+        }
         moveMailboxAction(
           context,
           mailbox,
           dashboardController,
-          onMovingMailboxAction: (mailboxSelected, destinationMailbox) => _invokeMovingMailboxAction(context, mailboxSelected, destinationMailbox)
+          onMovingMailboxAction: (operationAccountId, mailboxSelected, destinationMailbox) => _invokeMovingMailboxAction(context, operationAccountId, mailboxSelected, destinationMailbox)
         );
         break;
       case MailboxActions.delete:
+        if (mailbox.isDefault
+            || operationSession == null
+            || identity?.accountId == null
+            || !isMailboxMutationAllowed(mailbox, mailbox.myRights?.mayDelete)) {
+          return;
+        }
         openConfirmationDialogDeleteMailboxAction(
           context,
           responsiveUtils,
           imagePaths,
           mailbox,
-          onDeleteMailboxAction: _deleteMailboxAction
+          onDeleteMailboxAction: (selectedMailbox) => _deleteMailboxAction(
+            selectedMailbox,
+            operationSession,
+            identity!.accountId!,
+            primaryAccountId,
+          )
         );
         break;
       case MailboxActions.disableMailbox:
         _updateSubscribeStateOfMailboxAction(
-          mailbox.id,
+          mailbox,
           MailboxSubscribeState.disabled,
           MailboxSubscribeAction.unSubscribe
         );
         break;
       case MailboxActions.enableMailbox:
         _updateSubscribeStateOfMailboxAction(
-          mailbox.id,
+          mailbox,
           MailboxSubscribeState.enabled,
           MailboxSubscribeAction.subscribe
         );
@@ -423,9 +459,11 @@ class SearchMailboxController extends BaseMailboxController with MailboxActionHa
         break;
       case MailboxActions.copySubaddress:
         try {
+          final identity = actionableMailboxIdentity(mailbox);
+          if (identity == null) return;
           final subAddress = getSubAddress(
             dashboardController.ownEmailAddress.value,
-            findNodePathWithSeparator(mailbox.id, '.')!,
+            findNodePathWithSeparatorByIdentity(identity, '.')!,
           );
           copySubAddressAction(context, subAddress);
         } catch (error) {
@@ -437,9 +475,11 @@ class SearchMailboxController extends BaseMailboxController with MailboxActionHa
         break;
       case MailboxActions.allowSubaddressing:
         try{
+          if (operationSession == null || identity?.accountId == null) return;
+          final operationIdentity = identity!;
           final subAddress = getSubAddress(
             dashboardController.ownEmailAddress.value,
-            findNodePathWithSeparator(mailbox.id, '.')!,
+            findNodePathWithSeparatorByIdentity(operationIdentity, '.')!,
           );
           openConfirmationDialogSubAddressingAction(
             context,
@@ -447,7 +487,15 @@ class SearchMailboxController extends BaseMailboxController with MailboxActionHa
             mailbox.getDisplayName(context),
             subAddress,
             mailbox.rights,
-            onAllowSubAddressingAction: _handleSubAddressingAction
+            onAllowSubAddressingAction: (_, rights, action) =>
+                _handleSubAddressingAction(
+                  mailbox,
+                  rights,
+                  action,
+                  operationSession: operationSession,
+                  operationAccountId: operationIdentity.accountId!,
+                  primaryAccountId: primaryAccountId,
+                )
           );
         } catch (error) {
           appToast.showToastErrorMessage(
@@ -457,7 +505,7 @@ class SearchMailboxController extends BaseMailboxController with MailboxActionHa
         }
         break;
       case MailboxActions.disallowSubaddressing:
-        _handleSubAddressingAction(mailbox.id, mailbox.rights, actions);
+        _handleSubAddressingAction(mailbox, mailbox.rights, actions);
         break;
       case MailboxActions.moveFolderContent:
         performMoveFolderContent(
@@ -474,16 +522,25 @@ class SearchMailboxController extends BaseMailboxController with MailboxActionHa
   }
 
   void _handleSubAddressingAction(
-    MailboxId mailboxId,
+    PresentationMailbox mailbox,
     Map<String, List<String>?>? currentRights,
     MailboxActions subAddressingAction,
+    {
+      Session? operationSession,
+      AccountId? operationAccountId,
+      AccountId? primaryAccountId,
+    }
   ) {
-    final accountId = dashboardController.accountId.value;
-    final session = dashboardController.sessionCurrent;
+    final resolvedAccountId = operationAccountId
+        ?? actionableMailboxIdentity(mailbox)?.accountId;
+    final resolvedSession = operationSession ?? session;
 
-    if (session != null && accountId != null) {
+    if (resolvedSession != null
+        && resolvedAccountId != null
+        && (operationSession == null
+            || _isMutationContextCurrent(operationSession, primaryAccountId))) {
       final allowSubAddressingRequest = MailboxRightRequest(
-          mailboxId,
+          mailbox.id,
           currentRights,
           subAddressingAction == MailboxActions.allowSubaddressing
               ? MailboxSubaddressingAction.allow
@@ -491,24 +548,33 @@ class SearchMailboxController extends BaseMailboxController with MailboxActionHa
       );
 
       consumeState(_subAddressingInteractor.execute(
-        session,
-        accountId,
+        resolvedSession,
+        resolvedAccountId,
         allowSubAddressingRequest,
       ));
-    } else {
+      popBack();
+    } else if (operationSession == null) {
       handleSubAddressingFailure(
         SubaddressingFailure.withException(const NullSessionOrAccountIdException()),
       );
+      popBack();
+    } else {
+      return;
     }
-
-    popBack();
   }
 
-  void _renameMailboxAction(PresentationMailbox presentationMailbox, MailboxName newMailboxName) {
-    if (session != null && accountId != null) {
+  void _renameMailboxAction(
+    PresentationMailbox presentationMailbox,
+    MailboxName newMailboxName,
+    Session operationSession,
+    AccountId operationAccountId,
+    AccountId? primaryAccountId,
+  ) {
+    if (_isMutationContextCurrent(operationSession, primaryAccountId)
+        && isMailboxMutationAllowed(presentationMailbox, presentationMailbox.myRights?.mayRename)) {
       consumeState(_renameMailboxInteractor.execute(
-        session!,
-        accountId!,
+        operationSession,
+        operationAccountId,
         RenameMailboxRequest(presentationMailbox.id, newMailboxName),
       ));
     }
@@ -516,14 +582,16 @@ class SearchMailboxController extends BaseMailboxController with MailboxActionHa
 
   void _invokeMovingMailboxAction(
     BuildContext context,
+    AccountId operationAccountId,
     PresentationMailbox mailboxSelected,
     PresentationMailbox? destinationMailbox
   ) {
-    if (session != null && accountId != null) {
+    if (session != null
+        && isMailboxMutationAllowed(mailboxSelected, mailboxSelected.myRights?.mayRename)) {
       _handleMovingMailbox(
         context,
         session!,
-        accountId!,
+        operationAccountId,
         MoveAction.moving,
         mailboxSelected,
         destinationMailbox: destinationMailbox
@@ -585,18 +653,23 @@ class SearchMailboxController extends BaseMailboxController with MailboxActionHa
     }
   }
 
-  void _deleteMailboxAction(PresentationMailbox presentationMailbox) {
-    if (session != null && accountId != null) {
+  void _deleteMailboxAction(
+    PresentationMailbox presentationMailbox,
+    Session operationSession,
+    AccountId operationAccountId,
+    AccountId? primaryAccountId,
+  ) {
+    if (_isMutationContextCurrent(operationSession, primaryAccountId)
+        && isMailboxMutationAllowed(presentationMailbox, presentationMailbox.myRights?.mayDelete)) {
       consumeState(_deleteMultipleMailboxInteractor.execute(
-        session!,
-        accountId!,
+        operationSession,
+        operationAccountId,
         [presentationMailbox.id],
       ));
+      popBack();
     } else {
-      _deleteMailboxFailure(DeleteMultipleMailboxFailure(null));
+      return;
     }
-
-    popBack();
   }
 
   void _deleteMultipleMailboxSuccess(List<MailboxId> listMailboxIdDeleted, jmap.State? currentMailboxState) {
@@ -612,32 +685,31 @@ class SearchMailboxController extends BaseMailboxController with MailboxActionHa
     }
   }
 
-  void _deleteMailboxFailure(DeleteMultipleMailboxFailure failure) {
-    if (currentOverlayContext != null && currentContext != null) {
-      appToast.showToastErrorMessage(
-        currentOverlayContext!,
-        AppLocalizations.of(currentContext!).deleteFoldersFailure);
-    }
-  }
 
   void _updateSubscribeStateOfMailboxAction(
-    MailboxId mailboxId,
+    PresentationMailbox mailbox,
     MailboxSubscribeState subscribeState,
     MailboxSubscribeAction subscribeAction
   ) {
-    if (session != null && accountId != null) {
-      final subscribeRequest = generateSubscribeRequest(mailboxId, subscribeState, subscribeAction);
+    final identity = actionableMailboxIdentity(mailbox);
+    if (session != null && identity?.accountId != null) {
+      final subscribeRequest = generateSubscribeRequest(
+        mailbox,
+        identity!.accountId!,
+        subscribeState,
+        subscribeAction,
+      );
 
       if (subscribeRequest is SubscribeMultipleMailboxRequest) {
         consumeState(_subscribeMultipleMailboxInteractor.execute(
           session!,
-          accountId!,
+          identity.accountId!,
           subscribeRequest,
         ));
       } else if (subscribeRequest is SubscribeMailboxRequest) {
         consumeState(_subscribeMailboxInteractor.execute(
           session!,
-          accountId!,
+          identity.accountId!,
           subscribeRequest,
         ));
       }
@@ -818,7 +890,17 @@ class SearchMailboxController extends BaseMailboxController with MailboxActionHa
   }
 
   void goToCreateNewMailboxView(BuildContext context, {PresentationMailbox? parentMailbox}) async {
-    if (session != null && accountId != null) {
+    final operationSession = session;
+    final primaryAccountId = accountId;
+    final parentIdentity = parentMailbox == null
+        ? null
+        : actionableMailboxIdentity(parentMailbox);
+    final operationAccountId = parentIdentity?.accountId ?? primaryAccountId;
+    if (parentMailbox != null
+        && !isMailboxMutationAllowed(parentMailbox, parentMailbox.myRights?.mayCreateChild)) {
+      return;
+    }
+    if (operationSession != null && operationAccountId != null) {
       final arguments = MailboxCreatorArguments(
         allMailboxes.withoutVirtualMailbox,
         parentMailbox,
@@ -829,9 +911,26 @@ class SearchMailboxController extends BaseMailboxController with MailboxActionHa
         : await push(AppRoutes.mailboxCreator, arguments: arguments);
 
       if (result != null && result is NewMailboxArguments) {
+        if (!_isMutationContextCurrent(operationSession, primaryAccountId)) return;
+        final selectedParent = result.mailboxLocation;
+        if (selectedParent != null
+            && !isMailboxMutationAllowed(selectedParent, selectedParent.myRights?.mayCreateChild)) {
+          return;
+        }
+        final selectedParentIdentity = selectedParent == null
+            ? null
+            : BaseMailboxController.resolveActionableMailboxIdentity(
+                selectedParent,
+                primaryAccountId,
+              );
+        if (selectedParent != null
+            && (selectedParentIdentity == null
+                || selectedParentIdentity.accountId != operationAccountId)) {
+          return;
+        }
         _createNewMailboxAction(
-          session!,
-          accountId!,
+          operationSession,
+          operationAccountId,
           CreateNewMailboxRequest(
             result.newName,
             parentId: result.mailboxLocation?.id,
@@ -844,6 +943,11 @@ class SearchMailboxController extends BaseMailboxController with MailboxActionHa
   void _createNewMailboxAction(Session session, AccountId accountId, CreateNewMailboxRequest request) async {
     consumeState(_createNewMailboxInteractor.execute(session, accountId, request));
   }
+
+  bool _isMutationContextCurrent(
+    Session operationSession,
+    AccountId? primaryAccountId,
+  ) => identical(session, operationSession) && accountId == primaryAccountId;
 
   void _createNewMailboxSuccess(CreateNewMailboxSuccess success) {
     if (currentOverlayContext != null && currentContext != null) {

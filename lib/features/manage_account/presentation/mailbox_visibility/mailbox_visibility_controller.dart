@@ -5,6 +5,7 @@ import 'package:dartz/dartz.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import 'package:get/get.dart';
+import 'package:jmap_dart_client/jmap/account_id.dart';
 import 'package:jmap_dart_client/jmap/core/properties/properties.dart';
 import 'package:jmap_dart_client/jmap/core/state.dart' as jmap;
 import 'package:jmap_dart_client/jmap/mail/mailbox/mailbox.dart';
@@ -39,6 +40,10 @@ class MailboxVisibilityController extends BaseMailboxController {
   final _accountDashBoardController = Get.find<ManageAccountDashBoardController>();
   final mailboxListScrollController = ScrollController();
   final foldersExpandMode = Rx(ExpandMode.EXPAND);
+
+  @override
+  AccountId? get primaryAccountIdForMailboxIdentity =>
+      _accountDashBoardController.accountId.value;
 
   MailboxVisibilityController(
     TreeBuilder treeBuilder,
@@ -109,6 +114,7 @@ class MailboxVisibilityController extends BaseMailboxController {
     final mailboxSubscribeStateAction = mailboxNode.item.isSubscribedMailbox
       ? MailboxSubscribeAction.unSubscribe : MailboxSubscribeAction.subscribe;
     _subscribeMailboxAction(
+        mailboxNode.item,
         SubscribeMailboxRequest(
           mailboxNode.item.id,
           mailboxSubscribeState,
@@ -117,12 +123,16 @@ class MailboxVisibilityController extends BaseMailboxController {
     );
   }
 
-  void _subscribeMailboxAction(SubscribeMailboxRequest subscribeMailboxRequest) {
-    final accountId = _accountDashBoardController.accountId.value;
+  void _subscribeMailboxAction(
+    PresentationMailbox mailbox,
+    SubscribeMailboxRequest subscribeMailboxRequest,
+  ) {
+    final accountId = actionableMailboxIdentity(mailbox)?.accountId;
     final session = _accountDashBoardController.sessionCurrent;
     if (session != null && accountId != null) {
       final subscribeRequest = generateSubscribeRequest(
-        subscribeMailboxRequest.mailboxId,
+        mailbox,
+        accountId,
         subscribeMailboxRequest.subscribeState,
         subscribeMailboxRequest.subscribeAction
       );
@@ -199,13 +209,18 @@ class MailboxVisibilityController extends BaseMailboxController {
         currentOverlayContext!,
         AppLocalizations.of(currentContext!).toastMsgHideFolderSuccess,
         actionName: AppLocalizations.of(currentContext!).undo,
-        onActionClick: () => _subscribeMailboxAction(
-          SubscribeMailboxRequest(
+        onActionClick: () {
+          final mailbox = findMailboxNodeById(mailboxIdSubscribed)?.item;
+          if (mailbox == null) return;
+          _subscribeMailboxAction(
+            mailbox,
+            SubscribeMailboxRequest(
             mailboxIdSubscribed,
             MailboxSubscribeState.enabled,
             MailboxSubscribeAction.subscribe
-          )
-        ),
+            ),
+          );
+        },
         leadingSVGIconColor: Colors.white,
         leadingSVGIcon: imagePaths.icFolderMailbox,
         backgroundColor: AppColor.toastSuccessBackgroundColor,
