@@ -34,8 +34,27 @@ extension EmailExtension on Email {
 
   bool get withAttachments => hasAttachment == true;
 
+  /// The List-Unsubscribe header rendered from the RFC 8621 `asURLs` form.
+  ///
+  /// The header is requested `asURLs` (see ThreadConstants.propertiesDefault),
+  /// the RFC-defined form for List-* headers, because RFC-compliant backends
+  /// such as Cyrus populate the structured form rather than the `asText` one
+  /// the library's [listUnsubscribeHeader] convenience getter reads. The server
+  /// returns a parsed list of URLs, which is folded back into the
+  /// `<url>, <url>` text shape that EmailUtils.parsingUnsubscribe consumes, so
+  /// the rest of the unsubscribe pipeline is unchanged.
+  TextHeaderValue? get listUnsubscribeUrlsHeader {
+    final value = individualHeaders[
+      IndividualHeaderIdentifier.asURLs(EmailProperty.headerUnsubscribeKey)];
+    if (value is URLsHeaderValue && value.urls.isNotEmpty) {
+      return TextHeaderValue(value.urls.map((url) => '<$url>').join(', '));
+    }
+    return null;
+  }
+
   String get listUnsubscribe => headers.listUnsubscribe
     ?? listUnsubscribeHeader?.value
+    ?? listUnsubscribeUrlsHeader?.value
     ?? '';
 
   bool get hasRequestReadReceipt => headers.readReceiptHasBeenRequested ||
@@ -130,7 +149,7 @@ extension EmailExtension on Email {
       importanceHeader: importanceHeader,
       priorityHeader: priorityHeader,
       listPostHeader: listPostHeader,
-      listUnsubscribeHeader: listUnsubscribeHeader,
+      listUnsubscribeHeader: listUnsubscribeHeader ?? listUnsubscribeUrlsHeader,
       messageId: messageId,
       references: references,
     )

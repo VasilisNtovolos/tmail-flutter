@@ -26,7 +26,11 @@ class ThreadConstants {
     IndividualHeaderIdentifier.xPriorityHeader.value,
     IndividualHeaderIdentifier.importanceHeader.value,
     IndividualHeaderIdentifier.priorityHeader.value,
-    IndividualHeaderIdentifier.listUnsubscribeHeader.value,
+    // Request the List-Unsubscribe header in the RFC 8621 `asURLs` form, the
+    // RFC-defined form for List-* headers. RFC-compliant backends such as Cyrus
+    // populate this structured form rather than `asText`. The parsed URLs are
+    // read back through EmailExtension.listUnsubscribeUrlsHeader.
+    IndividualHeaderIdentifier.asURLs(EmailProperty.headerUnsubscribeKey).value,
   });
   static final propertiesUpdatedDefault = propertiesDefault;
 
