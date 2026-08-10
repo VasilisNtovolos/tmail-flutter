@@ -34,27 +34,46 @@ extension HandleActionTypeForEmailSelection on MailboxDashBoardController {
       return;
     }
 
+    final currentAccountId = emailActionAccountId;
+
+    // A delegated ("Other Users") account resolves its own role folders: the
+    // primary account's Trash/Spam/Archive ids do not exist there, so targeting
+    // them would move into a non-existent mailbox (and skip the destination ACL
+    // check, since it cannot be found).
+    final isDelegated =
+        currentAccountId != null && currentAccountId != accountId.value;
+
     MailboxId? destinationMailboxId;
 
     if (actionType == EmailActionType.moveToMailbox) {
       destinationMailboxId = selectedMailboxId;
     } else if (actionType == EmailActionType.moveToSpam) {
-      destinationMailboxId = spamMailboxId;
+      destinationMailboxId = isDelegated
+          ? roleMailboxIdInAccount(currentAccountId, [
+              PresentationMailbox.roleJunk,
+              PresentationMailbox.roleSpam,
+            ])
+          : spamMailboxId;
     } else if (actionType == EmailActionType.moveToTrash) {
       if (selectedMailbox.value?.isChildOfTeamMailboxes == true) {
         final (:trashId, :trashPath) =
             getTrashMailboxIdAndPath(selectedMailbox.value!);
         destinationMailboxId = trashId;
         destinationFolderPath = trashPath;
+      } else if (isDelegated) {
+        destinationMailboxId = roleMailboxIdInAccount(
+            currentAccountId, [PresentationMailbox.roleTrash]);
       } else {
         destinationMailboxId =
             getMailboxIdByRole(PresentationMailbox.roleTrash);
       }
     } else if (actionType == EmailActionType.archiveMessage) {
-      destinationMailboxId = getMailboxIdByRole(PresentationMailbox.roleArchive);
+      destinationMailboxId = isDelegated
+          ? roleMailboxIdInAccount(
+              currentAccountId, [PresentationMailbox.roleArchive])
+          : getMailboxIdByRole(PresentationMailbox.roleArchive);
     }
 
-    final currentAccountId = emailActionAccountId;
     if (currentAccountId == null ||
         destinationMailboxId == null ||
         sessionCurrent == null) {

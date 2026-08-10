@@ -1019,6 +1019,23 @@ class MailboxDashBoardController extends ReloadableController
       ?? mapDefaultMailboxIdByRole[PresentationMailbox.roleSpam];
   }
 
+  /// The first mailbox matching [roles] (in order) that belongs to
+  /// [ownerAccountId]. Role destinations (Trash, Spam, Archive) must target the
+  /// owning account's own folder: the primary account's same-role ids do not
+  /// exist in a delegated ("Other Users") account, so resolving them there sends
+  /// the move to a non-existent mailbox. Resolved from mapMailboxByKey (all
+  /// accounts) by role, so it does not depend on folder naming.
+  MailboxId? roleMailboxIdInAccount(AccountId ownerAccountId, List<Role> roles) {
+    for (final role in roles) {
+      for (final mailbox in mapMailboxByKey.values) {
+        if (mailbox.accountId == ownerAccountId && mailbox.role == role) {
+          return mailbox.id;
+        }
+      }
+    }
+    return null;
+  }
+
   Set<MailboxId>? get trashSpamMailboxIds {
     final ids = mapMailboxById.entries
         .where((entry) => entry.value.isTrash || entry.value.isSpam)

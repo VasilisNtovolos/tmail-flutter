@@ -146,7 +146,17 @@ mixin EmailActionController {
   void moveToSpam(PresentationEmail email, {PresentationMailbox? mailboxContain}) async {
     final session = mailboxDashBoardController.sessionCurrent;
     final accountId = mailboxDashBoardController.emailActionAccountId;
-    final spamMailboxId = mailboxDashBoardController.spamMailboxId;
+    // A delegated account uses its own Spam/Junk folder: the primary account's
+    // spam id does not exist there. Resolving it there would move into a
+    // non-existent mailbox and skip the destination permission check.
+    final isDelegated =
+        accountId != null && accountId != mailboxDashBoardController.accountId.value;
+    final spamMailboxId = isDelegated
+        ? mailboxDashBoardController.roleMailboxIdInAccount(accountId, [
+            PresentationMailbox.roleJunk,
+            PresentationMailbox.roleSpam,
+          ])
+        : mailboxDashBoardController.spamMailboxId;
 
     if (session != null && mailboxContain != null && accountId != null && spamMailboxId != null) {
       moveToSpamAction(

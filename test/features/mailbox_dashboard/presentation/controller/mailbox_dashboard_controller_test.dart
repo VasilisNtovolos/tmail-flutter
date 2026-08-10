@@ -891,6 +891,57 @@ void main() {
       expect(spamId, equals(junkMailboxId));
     });
 
+    test(
+        'roleMailboxIdInAccount resolves the delegated account own Junk folder,'
+        ' not the primary spam id', () {
+      final delegatedAccountId = AccountId(Id('delegated-1'));
+      final delegatedJunk = PresentationMailbox(
+        MailboxId(Id('junk-delegated')),
+        accountId: delegatedAccountId,
+        role: PresentationMailbox.roleJunk,
+        isSharedAccount: true,
+      );
+      final primaryJunk = PresentationMailbox(
+        MailboxId(Id('junk-primary')),
+        accountId: testAccountId,
+        role: PresentationMailbox.roleJunk,
+      );
+      mailboxDashboardController.setMapMailboxByKey({
+        MailboxKey(delegatedAccountId, delegatedJunk.id): delegatedJunk,
+        MailboxKey(testAccountId, primaryJunk.id): primaryJunk,
+      });
+
+      final resolved = mailboxDashboardController.roleMailboxIdInAccount(
+        delegatedAccountId,
+        [PresentationMailbox.roleJunk, PresentationMailbox.roleSpam],
+      );
+
+      expect(resolved, equals(delegatedJunk.id));
+      expect(resolved, isNot(equals(primaryJunk.id)));
+    });
+
+    test(
+        'roleMailboxIdInAccount returns null when the account has no folder for'
+        ' the roles', () {
+      final delegatedAccountId = AccountId(Id('delegated-1'));
+      final delegatedInbox = PresentationMailbox(
+        MailboxId(Id('inbox-delegated')),
+        accountId: delegatedAccountId,
+        role: PresentationMailbox.roleInbox,
+        isSharedAccount: true,
+      );
+      mailboxDashboardController.setMapMailboxByKey({
+        MailboxKey(delegatedAccountId, delegatedInbox.id): delegatedInbox,
+      });
+
+      final resolved = mailboxDashboardController.roleMailboxIdInAccount(
+        delegatedAccountId,
+        [PresentationMailbox.roleTrash],
+      );
+
+      expect(resolved, isNull);
+    });
+
     test('should returns junk mailbox ID if spam ID does not exist', () {
       // Arrange
       final junkMailboxId = MailboxId(Id('junk-id'));
