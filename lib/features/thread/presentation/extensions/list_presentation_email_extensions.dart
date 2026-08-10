@@ -62,6 +62,14 @@ extension ListPresentationEmailExtensions on List<PresentationEmail> {
           mailboxId: isSearchEmailRunning
               ? null
               : selectedMailbox?.browserRouteMailboxId,
+          // Carry the account for a delegated ("Other Users") mailbox so the URL
+          // (e.g. Open in new tab) reopens the email in the owning account, not a
+          // same-id primary folder that would 404.
+          mailboxAccountId: isSearchEmailRunning
+              ? null
+              : (selectedMailbox?.isSharedAccount == true
+                  ? selectedMailbox?.accountId
+                  : null),
           labelId: selectedMailbox?.labelId,
           searchQuery: isSearchEmailRunning ? searchQuery : null,
           dashboardType: isSearchEmailRunning ? DashboardType.search : DashboardType.normal

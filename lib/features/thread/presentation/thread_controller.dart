@@ -1570,6 +1570,12 @@ class ThreadController extends BaseController with EmailActionController {
       router: NavigationRouter(
         emailId: email.id,
         mailboxId: mailboxContain.browserRouteMailboxId,
+        // Keep the delegated account in the rewritten URL so a later reload or
+        // Open in new tab reopens the email in the owning account, not a same-id
+        // primary folder.
+        mailboxAccountId: mailboxContain.isSharedAccount
+            ? mailboxContain.accountId
+            : null,
         labelId: mailboxContain.labelId,
         dashboardType: DashboardType.normal
       )
