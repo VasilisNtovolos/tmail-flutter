@@ -1512,6 +1512,13 @@ class AppLocalizations {
     );
   }
 
+  String get moveEmailNotPermitted {
+    return Intl.message(
+      'You do not have permission to move these messages',
+      name: 'moveEmailNotPermitted',
+    );
+  }
+
   String get deleteFolder {
     return Intl.message(
         'Delete folder',

@@ -1516,6 +1516,29 @@ class MailboxDashBoardController extends ReloadableController
     }
   }
 
+  /// Whether the JMAP ACL (myRights) permits moving messages out of [source] and
+  /// into [destination]. Delegated ("Other Users") mailboxes expose
+  /// mayRemoveItems / mayAddItems; a null or true means allowed, as for the
+  /// user's own primary mailboxes. Shows an error toast and returns false when
+  /// the user lacks the permission, so a move to a read-only delegated folder
+  /// (e.g. another user's Trash) fails visibly instead of silently.
+  bool isEmailMovePermitted({
+    PresentationMailbox? source,
+    PresentationMailbox? destination,
+  }) {
+    final mayRemoveFromSource = source?.myRights?.mayRemoveItems != false;
+    final mayAddToDestination = destination?.myRights?.mayAddItems != false;
+    if (mayRemoveFromSource && mayAddToDestination) return true;
+
+    if (currentContext != null && currentOverlayContext != null) {
+      appToast.showToastErrorMessage(
+        currentOverlayContext!,
+        AppLocalizations.of(currentContext!).moveEmailNotPermitted,
+      );
+    }
+    return false;
+  }
+
   void dragSelectedMultipleEmailToMailboxAction(
     List<PresentationEmail> listEmails,
     PresentationMailbox destinationMailbox,
@@ -1536,6 +1559,16 @@ class MailboxDashBoardController extends ReloadableController
           AppLocalizations.of(currentContext!).moveEmailAcrossAccountsNotSupported,
         );
       }
+      return;
+    }
+
+    // Starring (Favorite) is a keyword change, not a move, so it needs no
+    // add/remove permission. A real move must respect the delegated ACL.
+    if (!destinationMailbox.isFavorite &&
+        !isEmailMovePermitted(
+          source: selectedMailbox.value,
+          destination: destinationMailbox,
+        )) {
       return;
     }
 

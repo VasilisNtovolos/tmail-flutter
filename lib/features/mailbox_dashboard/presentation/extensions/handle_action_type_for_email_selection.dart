@@ -7,6 +7,7 @@ import 'package:model/email/presentation_email.dart';
 import 'package:model/extensions/list_presentation_email_extension.dart';
 import 'package:model/extensions/presentation_email_extension.dart';
 import 'package:model/extensions/presentation_mailbox_extension.dart';
+import 'package:model/mailbox/mailbox_key.dart';
 import 'package:model/mailbox/presentation_mailbox.dart';
 import 'package:tmail_ui_user/features/email/domain/model/move_action.dart';
 import 'package:tmail_ui_user/features/email/domain/model/move_to_mailbox_request.dart';
@@ -65,6 +66,19 @@ extension HandleActionTypeForEmailSelection on MailboxDashBoardController {
           ParametersIsNullException(),
         ))),
       );
+      return;
+    }
+
+    // Respect the delegated ACL (myRights): moving out of the source and into
+    // the destination (e.g. another user's Trash) requires permission, or the
+    // move fails silently on the server. Resolve the destination by its
+    // account-scoped key so a delegated folder's own rights are checked.
+    final destinationMailbox =
+        mapMailboxByKey[MailboxKey(currentAccountId, destinationMailboxId)];
+    if (!isEmailMovePermitted(
+      source: selectedMailbox.value,
+      destination: destinationMailbox,
+    )) {
       return;
     }
 

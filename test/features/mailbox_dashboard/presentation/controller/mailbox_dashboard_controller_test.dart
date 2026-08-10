@@ -19,6 +19,7 @@ import 'package:jmap_dart_client/jmap/mail/email/email.dart';
 import 'package:jmap_dart_client/jmap/mail/mailbox/mailbox.dart';
 import 'package:mockito/annotations.dart';
 import 'package:mockito/mockito.dart';
+import 'package:jmap_dart_client/jmap/mail/mailbox/mailbox_rights.dart';
 import 'package:model/email/mark_star_action.dart';
 import 'package:model/email/presentation_email.dart';
 import 'package:model/email/read_actions.dart';
@@ -825,6 +826,42 @@ void main() {
         )).captured;
         expect(captured[1], delegatedAccountId);
         expect(captured[1], isNot(testAccountId));
+      },
+    );
+
+    test(
+      'WHEN dragging emails into a delegated folder without add permission\n'
+      'SHOULD block the move and not call the move interactor',
+      () {
+        final delegatedAccountId = AccountId(Id('delegated-1'));
+        final source = PresentationMailbox(
+          MailboxId(Id('99')),
+          accountId: delegatedAccountId,
+          isSharedAccount: true,
+          myRights: MailboxRights(
+              true, true, true, true, true, true, true, true, true),
+        );
+        // mayAddItems = false: the user may read this folder but not file into it.
+        final readOnlyDestination = PresentationMailbox(
+          MailboxId(Id('100')),
+          accountId: delegatedAccountId,
+          isSharedAccount: true,
+          myRights: MailboxRights(
+              true, false, true, true, true, true, true, true, true),
+        );
+        final email = PresentationEmail(
+          id: EmailId(Id('e1')),
+          mailboxIds: {source.id: true},
+        );
+
+        mailboxDashboardController.selectedMailbox.value = source;
+
+        mailboxDashboardController.dragSelectedMultipleEmailToMailboxAction(
+          [email],
+          readOnlyDestination,
+        );
+
+        verifyNever(moveToMailboxInteractor.execute(any, any, any, any));
       },
     );
 

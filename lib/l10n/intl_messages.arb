@@ -1496,6 +1496,12 @@
     "placeholders_order": [],
     "placeholders": {}
   },
+  "moveEmailNotPermitted": "You do not have permission to move these messages",
+  "@moveEmailNotPermitted": {
+    "type": "text",
+    "placeholders_order": [],
+    "placeholders": {}
+  },
   "deleteFolder": "Delete folder",
   "@deleteFolder": {
     "type": "text",
