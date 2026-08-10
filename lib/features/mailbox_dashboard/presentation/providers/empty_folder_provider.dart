@@ -9,6 +9,7 @@ import 'package:jmap_dart_client/jmap/core/session/session.dart';
 import 'package:jmap_dart_client/jmap/mail/email/email.dart';
 import 'package:jmap_dart_client/jmap/mail/mailbox/mailbox.dart';
 import 'package:model/extensions/presentation_mailbox_extension.dart';
+import 'package:model/mailbox/mailbox_key.dart';
 import 'package:model/mailbox/presentation_mailbox.dart';
 import 'package:riverpod_annotation/riverpod_annotation.dart';
 import 'package:tmail_ui_user/features/mailbox/domain/state/clear_mailbox_state.dart';
@@ -75,8 +76,11 @@ class _SubfoldersDeleteFailed extends _SubfoldersResult {
 
 @riverpod
 class EmptyFolderNotifier extends _$EmptyFolderNotifier {
+  // Keyed by MailboxKey (accountId + id), not a bare MailboxId, so a delegated
+  // folder and a primary folder that share an id get distinct notifier identities
+  // and do not conflate loading/progress/completion state.
   @override
-  EmptyFolderState build(MailboxId mailboxId) => const EmptyFolderIdle();
+  EmptyFolderState build(MailboxKey mailboxKey) => const EmptyFolderIdle();
 
   bool get mounted => ref.mounted;
 

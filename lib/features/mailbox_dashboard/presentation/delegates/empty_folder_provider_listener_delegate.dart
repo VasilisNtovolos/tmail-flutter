@@ -93,7 +93,7 @@ class EmptyFolderProviderListenerDelegate
 
     _stateSubscription?.close();
     _stateSubscription = ref.listenManual(
-      emptyFolderProvider(mailbox.id),
+      emptyFolderProvider(mailbox.key),
       (_, state) => _handleEmptyFolderStateChange(
         context,
         ref,
@@ -103,7 +103,7 @@ class EmptyFolderProviderListenerDelegate
     );
 
     ref
-        .read(emptyFolderProvider(mailbox.id).notifier)
+        .read(emptyFolderProvider(mailbox.key).notifier)
         .execute(session, accountId, mailbox, childIds, useJmapClear);
   }
 

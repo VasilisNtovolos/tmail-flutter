@@ -12,6 +12,7 @@ import 'package:jmap_dart_client/jmap/mail/email/email.dart';
 import 'package:jmap_dart_client/jmap/mail/mailbox/mailbox.dart';
 import 'package:mockito/annotations.dart';
 import 'package:mockito/mockito.dart';
+import 'package:model/mailbox/mailbox_key.dart';
 import 'package:model/mailbox/presentation_mailbox.dart';
 import 'package:tmail_ui_user/features/mailbox/domain/state/clear_mailbox_state.dart';
 import 'package:tmail_ui_user/features/mailbox/domain/state/delete_multiple_mailbox_state.dart';
@@ -42,6 +43,7 @@ void main() {
   final accountId = AccountFixtures.aliceAccountId;
 
   final trashMailboxId = MailboxId(Id('trash-1'));
+  final trashMailboxKey = MailboxKey(accountId, trashMailboxId);
   final trashMailbox = PresentationMailbox(
     trashMailboxId,
     name: MailboxName('Trash'),
@@ -67,7 +69,7 @@ void main() {
 
     container = ProviderContainer();
     notifier = container.read(
-      emptyFolderProvider(trashMailboxId).notifier,
+      emptyFolderProvider(trashMailboxKey).notifier,
     );
   });
 
@@ -114,7 +116,7 @@ void main() {
   List<EmptyFolderState> listenStates() {
     final states = <EmptyFolderState>[];
     container.listen(
-      emptyFolderProvider(trashMailboxId),
+      emptyFolderProvider(trashMailboxKey),
       (_, EmptyFolderState next) => states.add(next),
       fireImmediately: false,
     );
@@ -122,7 +124,7 @@ void main() {
   }
 
   EmptyFolderSuccess readSuccess() =>
-      container.read(emptyFolderProvider(trashMailboxId))
+      container.read(emptyFolderProvider(trashMailboxKey))
           as EmptyFolderSuccess;
 
   Future<void> expectInteractorErrorEmitsFailure({
@@ -133,7 +135,7 @@ void main() {
   }) async {
     stubThrow(error);
     await notifier.execute(session, accountId, trashMailbox, [], useJmapClear);
-    final state = container.read(emptyFolderProvider(trashMailboxId));
+    final state = container.read(emptyFolderProvider(trashMailboxKey));
     expect(state, isA<EmptyFolderFailure>());
     final failure = state as EmptyFolderFailure;
     expect(failure.exception, error);
@@ -144,7 +146,7 @@ void main() {
     group('initial state', () {
       test('starts as EmptyFolderIdle', () {
         expect(
-          container.read(emptyFolderProvider(trashMailboxId)),
+          container.read(emptyFolderProvider(trashMailboxKey)),
           isA<EmptyFolderIdle>(),
         );
       });
@@ -292,13 +294,13 @@ void main() {
         container.dispose();
         container = ProviderContainer();
         notifier = container.read(
-          emptyFolderProvider(trashMailboxId).notifier,
+          emptyFolderProvider(trashMailboxKey).notifier,
         );
 
         await notifier.execute(session, accountId, trashMailbox, [], true);
 
         expect(
-          container.read(emptyFolderProvider(trashMailboxId)),
+          container.read(emptyFolderProvider(trashMailboxKey)),
           isA<EmptyFolderFailure>(),
         );
       });
