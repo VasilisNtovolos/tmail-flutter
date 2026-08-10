@@ -161,6 +161,7 @@ void main() {
     Get.put<TwakeAppManager>(mockTwakeAppManager);
 
     when(mailboxDashboardController.accountId).thenReturn(Rxn(testAccountId));
+    when(mailboxDashboardController.emailActionAccountId).thenReturn(testAccountId);
     when(uuid.v4()).thenReturn(testTaskId);
   });
 
@@ -334,6 +335,7 @@ void main() {
       when(mailboxDashboardController.emailUIAction).thenReturn(Rxn(EmailUIAction()));
       when(mailboxDashboardController.viewState).thenReturn(Rx(Right(UIState.idle)));
       when(mailboxDashboardController.accountId).thenReturn(Rxn(AccountFixtures.aliceAccountId));
+      when(mailboxDashboardController.emailActionAccountId).thenReturn(AccountFixtures.aliceAccountId);
       when(mailboxDashboardController.downloadController).thenReturn(downloadController);
       when(downloadController.downloadUIAction).thenAnswer((_) => Rxn(DownloadUIAction.idle));
 
@@ -393,6 +395,7 @@ void main() {
       when(mailboxDashboardController.emailUIAction).thenReturn(Rxn(EmailUIAction()));
       when(mailboxDashboardController.viewState).thenReturn(Rx(Right(UIState.idle)));
       when(mailboxDashboardController.accountId).thenReturn(Rxn(AccountFixtures.aliceAccountId));
+      when(mailboxDashboardController.emailActionAccountId).thenReturn(AccountFixtures.aliceAccountId);
       when(mailboxDashboardController.downloadController).thenReturn(downloadController);
       when(downloadController.downloadUIAction).thenAnswer((_) => Rxn(DownloadUIAction.idle));
 
@@ -437,6 +440,7 @@ void main() {
       when(mailboxDashboardController.emailUIAction).thenReturn(Rxn(EmailUIAction()));
       when(mailboxDashboardController.viewState).thenReturn(Rx(Right(UIState.idle)));
       when(mailboxDashboardController.accountId).thenReturn(Rxn(AccountFixtures.aliceAccountId));
+      when(mailboxDashboardController.emailActionAccountId).thenReturn(AccountFixtures.aliceAccountId);
       when(mailboxDashboardController.downloadController).thenReturn(downloadController);
       when(downloadController.downloadUIAction).thenAnswer((_) => Rxn(DownloadUIAction.idle));
 

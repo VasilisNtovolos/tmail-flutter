@@ -171,7 +171,11 @@ class SingleEmailController extends BaseController with AppLoaderMixin {
   Id? get _displayingEventBlobId => blobCalendarEvent.value?.blobId;
   bool get isCalendarEventFree => blobCalendarEvent.value?.isFree ?? true;
 
-  AccountId? get accountId => mailboxDashBoardController.accountId.value;
+  // The account the displayed email lives in: the selected mailbox's account,
+  // which is a delegated ("Other Users") account when such a mailbox is open.
+  // Email content, mark-as-read, attachments and MDN must all run against it, or
+  // reading a delegated email fails with notFound.
+  AccountId? get accountId => mailboxDashBoardController.emailActionAccountId;
 
   Session? get session => mailboxDashBoardController.sessionCurrent;
 
@@ -441,8 +445,12 @@ class SingleEmailController extends BaseController with AppLoaderMixin {
   }
 
   void _getAllIdentities() {
-    if (accountId != null && session != null) {
-      consumeState(_getAllIdentitiesInteractor.execute(session!, accountId!));
+    // Identities are the signed-in user's own send-as addresses, so they come
+    // from the primary account even when reading a delegated email (you reply as
+    // yourself, not as the delegated account owner).
+    final primaryAccountId = mailboxDashBoardController.accountId.value;
+    if (primaryAccountId != null && session != null) {
+      consumeState(_getAllIdentitiesInteractor.execute(session!, primaryAccountId));
     }
   }
 
@@ -548,7 +556,7 @@ class SingleEmailController extends BaseController with AppLoaderMixin {
 
       if (_canParseCalendarEvent(blobIds: success.attachments?.calendarEventBlobIds ?? {})) {
         _parseCalendarEventAction(
-          accountId: mailboxDashBoardController.accountId.value!,
+          accountId: accountId!,
           blobIds: success.attachments?.calendarEventBlobIds ?? {},
         );
       } else {
@@ -588,7 +596,7 @@ class SingleEmailController extends BaseController with AppLoaderMixin {
 
       if (_canParseCalendarEvent(blobIds: success.attachments?.calendarEventBlobIds ?? {})) {
         _parseCalendarEventAction(
-          accountId: mailboxDashBoardController.accountId.value!,
+          accountId: accountId!,
           blobIds: success.attachments?.calendarEventBlobIds ?? {},
         );
       } else {

@@ -133,7 +133,10 @@ class ThreadDetailController extends BaseController {
   StreamController<MailViewShortcutActionViewEvent>? shortcutActionEventController;
   StreamSubscription<MailViewShortcutActionViewEvent>? shortcutActionEventSubscription;
 
-  AccountId? get accountId => mailboxDashBoardController.accountId.value;
+  // The account the open thread lives in: the selected mailbox's account, which
+  // is a delegated ("Other Users") account when such a mailbox is open. Loading
+  // a delegated thread's emails against the primary account would fail.
+  AccountId? get accountId => mailboxDashBoardController.emailActionAccountId;
   Session? get session => mailboxDashBoardController.sessionCurrent;
   MailboxId? get sentMailboxId => mailboxDashBoardController.getMailboxIdByRole(
     PresentationMailbox.roleSent,
