@@ -323,33 +323,48 @@ class MailboxController extends BaseMailboxController
     _lastPrimaryAccountId = null;
   }
 
-  /// Loads each delegated account's mailboxes concurrently, rebuilding the
-  /// sidebar as each one arrives so the section fills in progressively.
+  /// Loads the delegated accounts' mailboxes in bounded batches, rebuilding the
+  /// sidebar once per batch so the section fills in progressively without a
+  /// request burst or a full-tree rebuild per account.
   Future<void> _loadOtherUserMailboxes(
     Session session,
     AccountId primary,
   ) async {
     final accountIds =
         MailboxUtils.resolveOtherUserAccountIds(session, primary);
+    final loadingForPrimary = _lastPrimaryAccountId;
 
-    await Future.wait(
-      accountIds.map((accountId) => _loadOtherUserAccount(session, accountId)),
-    );
+    for (final chunk in accountIds
+        .slices(MailboxConstants.maxConcurrentDelegatedMailboxLoads)) {
+      final results = await Future.wait(
+        chunk.map((accountId) => _loadOtherUserAccount(session, accountId)),
+      );
+      // The primary account changed mid-load: stop, the caches were reset.
+      if (_lastPrimaryAccountId != loadingForPrimary) return;
+      // Rebuild once for the whole batch, and only when it actually added
+      // mailboxes, rather than once per account.
+      if (results.any((added) => added)) {
+        await _rebuildAllTrees(selectDefaultMailbox: false);
+      }
+    }
   }
 
-  Future<void> _loadOtherUserAccount(
+  /// Fetches one delegated account and stores it in the cache. Returns true when
+  /// it added a new account entry, so the caller can rebuild once per batch.
+  Future<bool> _loadOtherUserAccount(
     Session session,
     AccountId accountId,
   ) async {
     if (_otherUserAccountsInFlight.contains(accountId) ||
         _otherUserAccounts.containsKey(accountId)) {
-      return;
+      return false;
     }
     // Capture the primary account this load belongs to. If the user switches
     // primary account before the stream emits, the result is stale and must be
     // dropped, otherwise the previous account's delegates reappear.
     final loadingForPrimary = _lastPrimaryAccountId;
     _otherUserAccountsInFlight.add(accountId);
+    var added = false;
 
     try {
       // Run the interactor directly rather than through consumeState:
@@ -371,7 +386,7 @@ class MailboxController extends BaseMailboxController
 
         // The primary account changed while this load was in flight: drop the
         // result so a former account's delegates do not reappear.
-        if (_lastPrimaryAccountId != loadingForPrimary) return;
+        if (_lastPrimaryAccountId != loadingForPrimary) return false;
 
         // Ghost account: the JMAP session lists it but the user has no readable
         // mailbox in it. Skip it so it never appears in the sidebar.
@@ -400,12 +415,12 @@ class MailboxController extends BaseMailboxController
           mailboxes: mailboxes,
           mailboxState: success.currentMailboxState,
         );
-
-        await _rebuildAllTrees(selectDefaultMailbox: false);
+        added = true;
       }
     } finally {
       _otherUserAccountsInFlight.remove(accountId);
     }
+    return added;
   }
 
   /// Refreshes the already-loaded delegated accounts off the primary account's
@@ -472,7 +487,9 @@ class MailboxController extends BaseMailboxController
     // former account's delegates would reappear in the new account's sidebar.
     final loadingForPrimary = _lastPrimaryAccountId;
 
-    await Future.wait(accountIds.map((accountId) async {
+    for (final chunk in accountIds
+        .slices(MailboxConstants.maxConcurrentDelegatedMailboxLoads)) {
+      await Future.wait(chunk.map((accountId) async {
       final existing = _otherUserAccounts[accountId];
       if (existing == null) return;
 
@@ -502,7 +519,9 @@ class MailboxController extends BaseMailboxController
           mailboxState: success.currentMailboxState,
         );
       }
-    }));
+      }));
+      if (_lastPrimaryAccountId != loadingForPrimary) return;
+    }
 
     // Primary switched while reloading: the caches were reset, so skip the
     // rebuild to avoid re-populating the new account's sidebar with stale nodes.

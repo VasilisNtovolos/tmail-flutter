@@ -4,6 +4,11 @@ import 'package:model/mailbox/mailbox_property.dart';
 import 'package:model/mailbox/presentation_mailbox.dart';
 
 class MailboxConstants {
+  /// Maximum number of delegated ("Other Users") accounts fetched concurrently.
+  /// Caps the Mailbox/get request burst and the tree-rebuild cadence when a user
+  /// has many delegated accounts.
+  static const int maxConcurrentDelegatedMailboxLoads = 4;
+
   static final propertiesDefault = Properties({
     MailboxProperty.id,
     MailboxProperty.name,
