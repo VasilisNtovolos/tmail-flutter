@@ -19,7 +19,6 @@ import 'package:tmail_ui_user/features/mailbox_dashboard/presentation/strategies
 import 'package:tmail_ui_user/features/mailbox_dashboard/presentation/strategies/trash_folder_strategy.dart';
 import 'package:tmail_ui_user/features/mailbox_dashboard/presentation/delegates/dashboard_provider_listener_delegate.dart';
 import 'package:tmail_ui_user/features/mailbox_dashboard/presentation/extensions/delete_emails_in_mailbox_extension.dart';
-import 'package:tmail_ui_user/features/mailbox_dashboard/presentation/extensions/map_mailbox_by_id_extension.dart';
 import 'package:tmail_ui_user/features/mailbox_dashboard/presentation/providers/empty_folder_provider.dart';
 import 'package:tmail_ui_user/main/error/capability_validator.dart';
 import 'package:tmail_ui_user/main/localizations/app_localizations.dart';
@@ -83,7 +82,7 @@ class EmptyFolderProviderListenerDelegate
       return;
     }
 
-    final childIds = dashboardController.mapMailboxById.childMailboxIds(mailbox);
+    final childIds = dashboardController.childMailboxIdsOf(mailbox);
 
     final useJmapClear =
         CapabilityIdentifier.jmapMailboxClear.isSupported(session, accountId) &&

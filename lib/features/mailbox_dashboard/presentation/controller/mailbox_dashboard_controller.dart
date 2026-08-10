@@ -344,6 +344,10 @@ class MailboxDashBoardController extends ReloadableController
 
   Map<Role, MailboxId> mapDefaultMailboxIdByRole = {};
   Map<MailboxId, PresentationMailbox> mapMailboxById = {};
+  // Account-scoped mailbox index across every account (primary and delegated).
+  // Unlike [mapMailboxById] (primary only), this is the source for cross-account
+  // lookups such as the empty-folder child cascade.
+  Map<MailboxKey, PresentationMailbox> mapMailboxByKey = {};
   final emailsInCurrentMailbox = <PresentationEmail>[].obs;
   final listResultSearch = RxList<PresentationEmail>();
   PresentationMailbox? outboxMailbox;
@@ -1022,6 +1026,24 @@ class MailboxDashBoardController extends ReloadableController
   void setMapMailboxById(Map<MailboxId, PresentationMailbox> newMapMailboxById) {
     mapMailboxById = newMapMailboxById;
   }
+
+  void setMapMailboxByKey(Map<MailboxKey, PresentationMailbox> newMap) {
+    mapMailboxByKey = newMap;
+  }
+
+  /// Direct child mailbox ids of [parent] within the parent's own account.
+  ///
+  /// Resolved from [mapMailboxByKey] (all accounts) rather than [mapMailboxById]
+  /// (primary only), so emptying a delegated folder cascades over that account's
+  /// children instead of an empty list. JMAP ids collide across accounts, so the
+  /// account is matched too.
+  List<MailboxId> childMailboxIdsOf(PresentationMailbox parent) =>
+      mapMailboxByKey.values
+          .where((mailbox) =>
+              mailbox.parentId == parent.id &&
+              mailbox.accountId == parent.accountId)
+          .map((mailbox) => mailbox.id)
+          .toList();
 
   void removeMailboxesFromMap(List<MailboxId> mailboxIds) {
     if (mailboxIds.isEmpty) return;

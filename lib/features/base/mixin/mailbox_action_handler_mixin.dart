@@ -63,8 +63,10 @@ mixin MailboxActionHandlerMixin {
     final responsiveUtils = Get.find<ResponsiveUtils>();
     final appToast = Get.find<AppToast>();
 
-    final hasSubfolders = dashboardController.mapMailboxById.values
-        .any((m) => m.parentId == mailbox.id);
+    // Account-scoped so a delegated Trash's own subfolders are detected, not the
+    // primary account's identically numbered folders.
+    final hasSubfolders =
+        dashboardController.childMailboxIdsOf(mailbox).isNotEmpty;
     final hasContent = mailbox.countTotalEmails > 0 || hasSubfolders;
 
     if (responsiveUtils.isScreenWithShortestSide(context)) {

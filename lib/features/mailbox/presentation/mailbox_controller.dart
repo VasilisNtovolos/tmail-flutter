@@ -1029,8 +1029,16 @@ class MailboxController extends BaseMailboxController
           presentationMailbox.id: presentationMailbox,
     };
 
+    // Account-scoped index across every account, for cross-account lookups
+    // (e.g. the empty-folder child cascade) that must not be limited to primary.
+    final mapMailboxByKey = {
+      for (var presentationMailbox in allMailboxes)
+        presentationMailbox.key: presentationMailbox,
+    };
+
     mailboxDashBoardController.setMapDefaultMailboxIdByRole(mapDefaultMailboxIdByRole,);
     mailboxDashBoardController.setMapMailboxById(mapMailboxById);
+    mailboxDashBoardController.setMapMailboxByKey(mapMailboxByKey);
   }
 
   void _setOutboxMailbox() {
