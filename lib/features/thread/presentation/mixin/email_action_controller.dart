@@ -169,6 +169,10 @@ mixin EmailActionController {
           EmailActionType.moveToSpam),
         email.id != null ? {email.id! : email.hasRead} : {},
       );
+    } else {
+      // Surface a failure instead of a silent no-op, e.g. a delegated account
+      // with no Spam/Junk folder the user can file into.
+      mailboxDashBoardController.emitMoveEmailFailure(EmailActionType.moveToSpam);
     }
   }
 

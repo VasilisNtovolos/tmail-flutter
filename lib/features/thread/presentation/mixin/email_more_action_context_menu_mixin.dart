@@ -65,7 +65,13 @@ mixin EmailMoreActionContextMenu on LabelSubMenuMixin {
     final isTrash = mb?.isTrash ?? false;
     final isArchive = mb?.isArchive ?? false;
     final isTemplates = mb?.isTemplates ?? false;
-    final isChildOfTeam = mb?.isChildOfTeamMailboxes ?? false;
+    // Delegated ("Other Users") and Team mailboxes are non-personal. Spam and
+    // Archive are not offered there: the shared account may have no such folder
+    // the user can file into, matching how Team mailboxes already hide them.
+    // isChildOfTeamMailboxes only catches nested folders, so a top-level
+    // delegated folder (e.g. the shared Inbox) slips through; gate on isPersonal
+    // instead. A null mailbox (search results) keeps the actions.
+    final isSharedOrTeam = mb != null && !mb.isPersonal;
 
     final canPermanentlyDelete = isDrafts || isSpam || isTrash;
     final shouldShowLabelAs = params.isLabelAvailable;
@@ -78,9 +84,9 @@ mixin EmailMoreActionContextMenu on LabelSubMenuMixin {
           ? EmailActionType.deletePermanently
           : EmailActionType.moveToTrash,
       if (PlatformInfo.isWeb) EmailActionType.openInNewTab,
-      if (!isDrafts && !isChildOfTeam)
+      if (!isDrafts && !isSharedOrTeam)
         isSpam ? EmailActionType.unSpam : EmailActionType.moveToSpam,
-      if (!isArchive && !isChildOfTeam) EmailActionType.archiveMessage,
+      if (!isArchive && !isSharedOrTeam) EmailActionType.archiveMessage,
       if (!isDrafts && !isTemplates) EmailActionType.editAsNewEmail,
     ];
   }

@@ -3370,26 +3370,52 @@ class MailboxDashBoardController extends ReloadableController
     return false;
   }
 
+  /// Emit a visible move failure so an action that cannot complete (e.g. a
+  /// delegated account with no Archive/Spam folder to file into) shows a toast
+  /// instead of silently doing nothing.
+  void emitMoveEmailFailure(EmailActionType actionType) {
+    consumeState(Stream.value(Left(MoveMultipleEmailToMailboxFailure(
+      actionType,
+      MoveAction.moving,
+      ParametersIsNullException(),
+    ))));
+  }
+
   void archiveMessage(PresentationEmail email) {
-    final mailboxContain = email.findMailboxContain(mapMailboxById);
-    if (mailboxContain != null) {
-      final archiveMailboxId = getMailboxIdByRole(PresentationMailbox.roleArchive);
-      if (archiveMailboxId != null) {
-        final moveToArchiveMailboxRequest = MoveToMailboxRequest(
-          {mailboxContain.id: [email.id!]},
-          archiveMailboxId,
-          MoveAction.moving,
-          EmailActionType.moveToMailbox,
-          destinationPath: getMailboxNameById(archiveMailboxId),
-        );
-        moveToMailbox(
-          sessionCurrent!,
-          accountId.value!,
-          moveToArchiveMailboxRequest,
-          {email.id!: email.hasRead}
-        );
-      }
+    final currentAccountId = emailActionAccountId;
+    // Account-aware: a delegated email's mailbox is not in the primary map, and
+    // its Archive folder is not the primary account's Archive.
+    final mailboxContain =
+        mailboxContainOf(email, ownerAccountId: currentAccountId);
+    final archiveMailboxId = currentAccountId == null
+        ? null
+        : (currentAccountId != accountId.value
+            ? roleMailboxIdInAccount(
+                currentAccountId, [PresentationMailbox.roleArchive])
+            : getMailboxIdByRole(PresentationMailbox.roleArchive));
+
+    if (mailboxContain == null ||
+        archiveMailboxId == null ||
+        currentAccountId == null ||
+        sessionCurrent == null ||
+        email.id == null) {
+      emitMoveEmailFailure(EmailActionType.archiveMessage);
+      return;
     }
+
+    final moveToArchiveMailboxRequest = MoveToMailboxRequest(
+      {mailboxContain.id: [email.id!]},
+      archiveMailboxId,
+      MoveAction.moving,
+      EmailActionType.moveToMailbox,
+      destinationPath: getMailboxNameById(archiveMailboxId),
+    );
+    moveToMailbox(
+      sessionCurrent!,
+      currentAccountId,
+      moveToArchiveMailboxRequest,
+      {email.id!: email.hasRead}
+    );
   }
 
   String getMailboxNameById(MailboxId mailboxId) {

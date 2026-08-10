@@ -871,6 +871,38 @@ void main() {
       },
     );
 
+    test(
+      'WHEN archiving a delegated email whose account has no Archive folder\n'
+      'SHOULD fail visibly and not call the move interactor',
+      () {
+        final delegatedAccountId = AccountId(Id('delegated-1'));
+        final source = PresentationMailbox(
+          MailboxId(Id('99')),
+          accountId: delegatedAccountId,
+          isSharedAccount: true,
+          myRights: MailboxRights(
+              true, true, true, true, true, true, true, true, true),
+        );
+        final email = PresentationEmail(
+          id: EmailId(Id('e1')),
+          mailboxIds: {source.id: true},
+        );
+
+        mailboxDashboardController.sessionCurrent = testSession;
+        mailboxDashboardController.selectedMailbox.value = source;
+        // No Archive folder for the delegated account is loaded.
+        mailboxDashboardController.setMapMailboxByKey({
+          MailboxKey(delegatedAccountId, source.id): source,
+        });
+
+        mailboxDashboardController.archiveMessage(email);
+
+        verifyNever(moveToMailboxInteractor.execute(any, any, any, any));
+        verifyNever(
+            moveMultipleEmailToMailboxInteractor.execute(any, any, any, any));
+      },
+    );
+
     tearDown(Get.deleteAll);
   });
 
