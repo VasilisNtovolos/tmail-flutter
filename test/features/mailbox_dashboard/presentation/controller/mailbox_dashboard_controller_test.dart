@@ -942,6 +942,37 @@ void main() {
       expect(resolved, isNull);
     });
 
+    test(
+        'mailboxContainOf resolves a delegated email against the owning account'
+        ' when the primary map misses it', () {
+      final delegatedAccountId = AccountId(Id('delegated-1'));
+      final delegatedFolder = PresentationMailbox(
+        MailboxId(Id('99')),
+        accountId: delegatedAccountId,
+        isSharedAccount: true,
+        myRights:
+            MailboxRights(true, true, false, true, true, true, true, true, true),
+      );
+      final email = PresentationEmail(
+        id: EmailId(Id('e1')),
+        mailboxIds: {delegatedFolder.id: true},
+      );
+      // Primary map does not contain the delegated folder (id collisions).
+      mailboxDashboardController.setMapMailboxById({});
+      mailboxDashboardController.setMapMailboxByKey({
+        MailboxKey(delegatedAccountId, delegatedFolder.id): delegatedFolder,
+      });
+
+      final resolved = mailboxDashboardController.mailboxContainOf(
+        email,
+        ownerAccountId: delegatedAccountId,
+      );
+
+      expect(resolved, isNotNull);
+      expect(resolved!.id, equals(delegatedFolder.id));
+      expect(resolved.myRights?.mayRemoveItems, isFalse);
+    });
+
     test('should returns junk mailbox ID if spam ID does not exist', () {
       // Arrange
       final junkMailboxId = MailboxId(Id('junk-id'));

@@ -686,7 +686,12 @@ class SingleEmailController extends BaseController with AppLoaderMixin {
   }
 
   PresentationMailbox? getMailboxContain(PresentationEmail email) {
-    return email.findMailboxContain(mailboxDashBoardController.mapMailboxById);
+    // Account-aware: a delegated email's mailbox is not in the primary map, so
+    // resolve it against the owning account (the one whose mailbox is open).
+    return mailboxDashBoardController.mailboxContainOf(
+      email,
+      ownerAccountId: mailboxDashBoardController.emailActionAccountId,
+    );
   }
 
   void markAsEmailRead(

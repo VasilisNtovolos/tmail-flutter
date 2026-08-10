@@ -616,6 +616,8 @@ class MailboxDashBoardController extends ReloadableController
       _handleEmptyTrashFolderFailure(failure);
     } else if (failure is MoveMultipleEmailToMailboxFailure) {
       toastManager.showMessageFailure(failure);
+    } else if (failure is MoveToMailboxFailure) {
+      toastManager.showMessageFailure(failure);
     } else if (failure is GetAllComposerCacheFailure) {
       _handleIdentityCache();
     } else if (failure is GetServerSettingFailure) {
@@ -1017,6 +1019,25 @@ class MailboxDashBoardController extends ReloadableController
   MailboxId? get spamMailboxId {
     return mapDefaultMailboxIdByRole[PresentationMailbox.roleJunk]
       ?? mapDefaultMailboxIdByRole[PresentationMailbox.roleSpam];
+  }
+
+  /// Resolve the mailbox an [email] lives in, account-aware. The primary
+  /// mapMailboxById cannot resolve a delegated email (its mailbox belongs to
+  /// another account and JMAP ids collide across accounts), so fall back to the
+  /// account-scoped mapMailboxByKey using [ownerAccountId] when the primary
+  /// lookup misses. Without this a delegated email has no mailboxContain, and
+  /// every action that needs it (move to trash/spam/folder) silently no-ops.
+  PresentationMailbox? mailboxContainOf(
+    PresentationEmail email, {
+    AccountId? ownerAccountId,
+  }) {
+    final byPrimary = email.findMailboxContain(mapMailboxById);
+    if (byPrimary != null || ownerAccountId == null) return byPrimary;
+
+    final mailboxIds = email.mailboxIds?..removeWhere((_, selected) => !selected);
+    final firstMailboxId = mailboxIds?.keys.firstOrNull;
+    if (firstMailboxId == null) return null;
+    return mapMailboxByKey[MailboxKey(ownerAccountId, firstMailboxId)];
   }
 
   /// The first mailbox matching [roles] (in order) that belongs to

@@ -3,6 +3,7 @@ import 'package:core/utils/platform_info.dart';
 import 'package:jmap_dart_client/jmap/mail/mailbox/mailbox.dart';
 import 'package:model/email/presentation_email.dart';
 import 'package:model/extensions/presentation_email_extension.dart';
+import 'package:model/extensions/presentation_mailbox_extension.dart';
 import 'package:model/mailbox/presentation_mailbox.dart';
 import 'package:tmail_ui_user/features/email/presentation/extensions/email_extension.dart';
 import 'package:tmail_ui_user/features/mailbox/presentation/extensions/presentation_mailbox_extension.dart';
@@ -27,7 +28,16 @@ extension ListPresentationEmailExtensions on List<PresentationEmail> {
         isSearchEmailRunning: isSearchEmailRunning,
         searchQuery: searchQuery
       );
-      final mailboxContain = presentationEmail.findMailboxContain(mapMailboxById);
+      // mapMailboxById is primary-only, so a delegated ("Other Users") email
+      // never resolves there. In a normal folder view every listed email lives
+      // in selectedMailbox, so fall back to it: this carries the delegated
+      // account id and myRights the move/permission logic needs. Search and
+      // virtual folders mix mailboxes, so no fallback there.
+      final mailboxContain =
+          presentationEmail.findMailboxContain(mapMailboxById) ??
+              (isSearchEmailRunning || selectedMailbox?.isVirtualFolder == true
+                  ? null
+                  : selectedMailbox);
 
       return presentationEmail.syncPresentationEmail(
         mailboxContain: mailboxContain,
