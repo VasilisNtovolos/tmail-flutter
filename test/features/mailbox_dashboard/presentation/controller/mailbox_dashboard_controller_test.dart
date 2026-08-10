@@ -23,6 +23,7 @@ import 'package:jmap_dart_client/jmap/mail/mailbox/mailbox_rights.dart';
 import 'package:model/email/mark_star_action.dart';
 import 'package:model/email/presentation_email.dart';
 import 'package:model/email/read_actions.dart';
+import 'package:model/mailbox/mailbox_key.dart';
 import 'package:model/mailbox/presentation_mailbox.dart';
 import 'package:core/utils/platform_info.dart';
 import 'package:model/email/email_action_type.dart';
@@ -855,6 +856,11 @@ void main() {
         );
 
         mailboxDashboardController.selectedMailbox.value = source;
+        mailboxDashboardController.setMapMailboxByKey({
+          MailboxKey(delegatedAccountId, source.id): source,
+          MailboxKey(delegatedAccountId, readOnlyDestination.id):
+              readOnlyDestination,
+        });
 
         mailboxDashboardController.dragSelectedMultipleEmailToMailboxAction(
           [email],

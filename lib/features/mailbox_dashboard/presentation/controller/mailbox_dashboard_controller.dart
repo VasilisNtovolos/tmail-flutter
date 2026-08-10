@@ -1205,6 +1205,8 @@ class MailboxDashBoardController extends ReloadableController
     MoveToMailboxRequest moveRequest,
     Map<EmailId, bool> emailIdsWithReadStatus,
   ) {
+    if (!_isMoveRequestPermitted(accountId, moveRequest)) return;
+
     final currentMailboxes = moveRequest.currentMailboxes;
     if (currentMailboxes.length == 1 && currentMailboxes.values.first.length == 1) {
       consumeState(_moveToMailboxInteractor.execute(
@@ -1519,24 +1521,57 @@ class MailboxDashBoardController extends ReloadableController
   /// Whether the JMAP ACL (myRights) permits moving messages out of [source] and
   /// into [destination]. Delegated ("Other Users") mailboxes expose
   /// mayRemoveItems / mayAddItems; a null or true means allowed, as for the
-  /// user's own primary mailboxes. Shows an error toast and returns false when
-  /// the user lacks the permission, so a move to a read-only delegated folder
-  /// (e.g. another user's Trash) fails visibly instead of silently.
-  bool isEmailMovePermitted({
+  /// user's own primary mailboxes.
+  bool _canMoveBetween(
     PresentationMailbox? source,
     PresentationMailbox? destination,
-  }) {
+  ) {
     final mayRemoveFromSource = source?.myRights?.mayRemoveItems != false;
     final mayAddToDestination = destination?.myRights?.mayAddItems != false;
-    if (mayRemoveFromSource && mayAddToDestination) return true;
+    return mayRemoveFromSource && mayAddToDestination;
+  }
 
+  void _showMoveNotPermittedToast() {
     if (currentContext != null && currentOverlayContext != null) {
       appToast.showToastErrorMessage(
         currentOverlayContext!,
         AppLocalizations.of(currentContext!).moveEmailNotPermitted,
       );
     }
+  }
+
+  /// Whether the JMAP ACL permits moving from [source] into [destination],
+  /// showing an error toast when it does not so the move fails visibly instead
+  /// of silently (e.g. dropping into a read-only delegated folder).
+  bool isEmailMovePermitted({
+    PresentationMailbox? source,
+    PresentationMailbox? destination,
+  }) {
+    if (_canMoveBetween(source, destination)) return true;
+    _showMoveNotPermittedToast();
     return false;
+  }
+
+  /// Enforce the delegated ACL for a whole move request before it executes.
+  /// Every real move (drag, toolbar, context menu, thread detail) funnels
+  /// through [moveToMailbox] / [moveSelectedEmailMultipleToMailboxAction], so
+  /// checking here covers all entry points. Undo is exempt: it reverses a move
+  /// the server already accepted. Source and destination are resolved by their
+  /// account-scoped key so a delegated folder's own rights are honoured.
+  bool _isMoveRequestPermitted(
+    AccountId accountId,
+    MoveToMailboxRequest moveRequest,
+  ) {
+    if (moveRequest.moveAction != MoveAction.moving) return true;
+
+    final destination =
+        mapMailboxByKey[MailboxKey(accountId, moveRequest.destinationMailboxId)];
+    final permitted = moveRequest.currentMailboxes.keys.every((sourceId) {
+      final source = mapMailboxByKey[MailboxKey(accountId, sourceId)];
+      return _canMoveBetween(source, destination);
+    });
+    if (!permitted) _showMoveNotPermittedToast();
+    return permitted;
   }
 
   void dragSelectedMultipleEmailToMailboxAction(
@@ -1562,16 +1597,9 @@ class MailboxDashBoardController extends ReloadableController
       return;
     }
 
-    // Starring (Favorite) is a keyword change, not a move, so it needs no
-    // add/remove permission. A real move must respect the delegated ACL.
-    if (!destinationMailbox.isFavorite &&
-        !isEmailMovePermitted(
-          source: selectedMailbox.value,
-          destination: destinationMailbox,
-        )) {
-      return;
-    }
-
+    // A real move must respect the delegated ACL; the permission check runs
+    // centrally in moveToMailbox. Starring (Favorite) is a keyword change, not
+    // a move, so it is exempt and routes to the star interactor below.
     final emailIdsWithReadStatus = Map.fromEntries(listEmails
       .where((email) => email.id != null)
       .map((e) => MapEntry(e.id!, e.hasRead))
@@ -1697,6 +1725,8 @@ class MailboxDashBoardController extends ReloadableController
     MoveToMailboxRequest moveRequest,
     Map<EmailId, bool> emailIdsWithReadStatus,
   ) {
+    if (!_isMoveRequestPermitted(accountId, moveRequest)) return;
+
     consumeState(_moveMultipleEmailToMailboxInteractor.execute(
       session,
       accountId,

@@ -90,7 +90,7 @@ mixin EmailActionController {
       return;
     }
 
-    final accountId = mailboxDashBoardController.accountId.value;
+    final accountId = mailboxDashBoardController.emailActionAccountId;
     if (accountId == null) {
       mailboxDashBoardController.emitMoveToTrashFailure(
         NotFoundAccountIdException(),
@@ -145,7 +145,7 @@ mixin EmailActionController {
 
   void moveToSpam(PresentationEmail email, {PresentationMailbox? mailboxContain}) async {
     final session = mailboxDashBoardController.sessionCurrent;
-    final accountId = mailboxDashBoardController.accountId.value;
+    final accountId = mailboxDashBoardController.emailActionAccountId;
     final spamMailboxId = mailboxDashBoardController.spamMailboxId;
 
     if (session != null && mailboxContain != null && accountId != null && spamMailboxId != null) {
@@ -164,7 +164,7 @@ mixin EmailActionController {
 
   void unSpam(PresentationEmail email) async {
     final session = mailboxDashBoardController.sessionCurrent;
-    final accountId = mailboxDashBoardController.accountId.value;
+    final accountId = mailboxDashBoardController.emailActionAccountId;
     final spamMailboxId = mailboxDashBoardController.spamMailboxId;
     final inboxMailboxId = mailboxDashBoardController.getMailboxIdByRole(PresentationMailbox.roleInbox);
 
