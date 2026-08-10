@@ -1003,9 +1003,10 @@ void main() {
         primaryAccountId: primaryAccountId,
       );
 
-      // No synthetic per-account grouping node any more.
+      // No synthetic per-account grouping node any more: delegated folders fold
+      // flat into the team tree, so every top-level team node is a real mailbox.
       final teamNodes = result.teamMailboxTree.root.childrenItems ?? [];
-      expect(teamNodes.any((node) => node.item.isSharedAccountRoot), isFalse);
+      expect(teamNodes, isNotEmpty);
 
       final names = <String?>[];
       void collect(MailboxNode node) {

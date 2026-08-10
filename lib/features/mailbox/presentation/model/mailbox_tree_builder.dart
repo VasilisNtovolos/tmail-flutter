@@ -246,12 +246,12 @@ class TreeBuilder {
 
   // Traversal strategy by depth:
   //   virtual root (isPersonal=true)  → alphabetical — orders team account roots
-  //   other user account root (isSharedAccountRoot=true, depth=1) → system folders first, then alphabetical
+  //   team mailbox / delegated top-level (isTeamMailboxes=true) → system folders first, then alphabetical
   //   children/grandchildren (hasParentId=true) → alphabetical
   void _applyTeamMailboxSorting(MailboxNode node) {
     final children = node.childrenItems;
     if (children == null || children.isEmpty) return;
-    if (node.item.isTeamMailboxes || node.item.isSharedAccountRoot) {
+    if (node.item.isTeamMailboxes) {
       _sortWithSystemFoldersFirst(node);
     } else {
       sortByMailboxNameNodeChildren(node);
