@@ -139,6 +139,11 @@ class MailboxController extends BaseMailboxController
   /// account as loaded, leaving it free to retry.
   final Set<AccountId> _otherUserAccountsInFlight = {};
 
+  /// True while [_loadOtherUserMailboxes] is still fetching delegated accounts,
+  /// so a deep link to a not-yet-loaded delegated mailbox waits for its account
+  /// instead of failing to the unknown-route page.
+  bool _otherUserAccountsLoading = false;
+
   /// The primary account the other-user caches were populated for, so they can
   /// be cleared when the user switches accounts.
   AccountId? _lastPrimaryAccountId;
@@ -334,18 +339,38 @@ class MailboxController extends BaseMailboxController
         MailboxUtils.resolveOtherUserAccountIds(session, primary);
     final loadingForPrimary = _lastPrimaryAccountId;
 
-    for (final chunk in accountIds
-        .slices(MailboxConstants.maxConcurrentDelegatedMailboxLoads)) {
-      final results = await Future.wait(
-        chunk.map((accountId) => _loadOtherUserAccount(session, accountId)),
-      );
-      // The primary account changed mid-load: stop, the caches were reset.
-      if (_lastPrimaryAccountId != loadingForPrimary) return;
-      // Rebuild once for the whole batch, and only when it actually added
-      // mailboxes, rather than once per account.
-      if (results.any((added) => added)) {
-        await _rebuildAllTrees(selectDefaultMailbox: false);
+    _otherUserAccountsLoading = true;
+    try {
+      for (final chunk in accountIds
+          .slices(MailboxConstants.maxConcurrentDelegatedMailboxLoads)) {
+        final results = await Future.wait(
+          chunk.map((accountId) => _loadOtherUserAccount(session, accountId)),
+        );
+        // The primary account changed mid-load: stop, the caches were reset.
+        if (_lastPrimaryAccountId != loadingForPrimary) return;
+        // Rebuild once for the whole batch, and only when it actually added
+        // mailboxes, rather than once per account.
+        if (results.any((added) => added)) {
+          await _rebuildAllTrees(selectDefaultMailbox: false);
+          // A deep link may have been waiting for one of the accounts in this
+          // batch; retry it now that the tree includes them.
+          _retryPendingDelegatedRoute();
+        }
       }
+    } finally {
+      _otherUserAccountsLoading = false;
+    }
+    if (_lastPrimaryAccountId != loadingForPrimary) return;
+    // All delegated accounts are loaded: a still-pending delegated deep link is
+    // now either resolvable or genuinely unknown, so let it settle either way.
+    _retryPendingDelegatedRoute();
+  }
+
+  /// Re-runs deep-link resolution when a delegated mailbox URL is still pending,
+  /// e.g. after the account it targets finishes loading.
+  void _retryPendingDelegatedRoute() {
+    if (_navigationRouter?.mailboxAccountId != null) {
+      _handleDataFromNavigationRouter();
     }
   }
 
@@ -1199,6 +1224,16 @@ class MailboxController extends BaseMailboxController
             } else {
               _openMailboxFromLocationBar(matchedMailboxNode.item);
             }
+          } else if (routerAccountId != null &&
+              routerAccountId != primaryAccountId &&
+              !_otherUserAccounts.containsKey(routerAccountId) &&
+              _otherUserAccountsLoading) {
+            // The URL targets a delegated account that is still loading. Keep the
+            // route pending (do not clear it) so _loadOtherUserMailboxes retries
+            // it once that account arrives; show the default mailbox meanwhile.
+            if (mailboxDashBoardController.selectedMailbox.value == null) {
+              _selectSelectedMailboxDefault();
+            }
           } else {
             _clearNavigationRouter();
             popAndPush(AppRoutes.unknownRoutePage);
@@ -1240,6 +1275,12 @@ class MailboxController extends BaseMailboxController
           AppRoutes.dashboard,
           router: NavigationRouter(
             mailboxId: presentationMailbox.browserRouteMailboxId,
+            // Carry the account only for a delegated mailbox, so reloading the
+            // rewritten URL reopens the right account's mailbox, not a same-id
+            // primary folder.
+            mailboxAccountId: isOtherUserMailbox(presentationMailbox)
+                ? presentationMailbox.accountId
+                : null,
             labelId: presentationMailbox.labelId,
             dashboardType: DashboardType.normal,
           ),
