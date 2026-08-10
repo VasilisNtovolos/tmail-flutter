@@ -2,6 +2,7 @@ import 'package:core/presentation/state/failure.dart';
 import 'package:core/presentation/state/success.dart';
 import 'package:jmap_dart_client/jmap/mail/mailbox/mailbox.dart';
 import 'package:tmail_ui_user/features/email/domain/model/move_action.dart';
+import 'package:tmail_ui_user/features/mailbox/domain/model/mailbox_mutation_context.dart';
 
 class LoadingMoveMailbox extends UIState {}
 
@@ -12,6 +13,7 @@ class MoveMailboxSuccess extends UIState {
   final MailboxId? parentId;
   final MailboxId? destinationMailboxId;
   final String? destinationMailboxDisplayName;
+  final MailboxMutationContext mutationContext;
 
   MoveMailboxSuccess(
     this.mailboxIdSelected,
@@ -20,6 +22,7 @@ class MoveMailboxSuccess extends UIState {
       this.parentId,
       this.destinationMailboxId,
       this.destinationMailboxDisplayName,
+      required this.mutationContext,
     }
   );
 
@@ -30,10 +33,16 @@ class MoveMailboxSuccess extends UIState {
     parentId,
     destinationMailboxId,
     destinationMailboxDisplayName,
+    mutationContext,
   ];
 }
 
 class MoveMailboxFailure extends FeatureFailure {
+  final MailboxMutationContext mutationContext;
 
-  MoveMailboxFailure(dynamic exception) : super(exception: exception);
+  MoveMailboxFailure(dynamic exception, {required this.mutationContext})
+      : super(exception: exception);
+
+  @override
+  List<Object?> get props => [mutationContext, ...super.props];
 }

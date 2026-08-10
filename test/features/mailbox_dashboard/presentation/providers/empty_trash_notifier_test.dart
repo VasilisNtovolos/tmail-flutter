@@ -15,6 +15,7 @@ import 'package:mockito/mockito.dart';
 import 'package:model/mailbox/presentation_mailbox.dart';
 import 'package:tmail_ui_user/features/mailbox/domain/state/clear_mailbox_state.dart';
 import 'package:tmail_ui_user/features/mailbox/domain/state/delete_multiple_mailbox_state.dart';
+import 'package:tmail_ui_user/features/mailbox/domain/model/mailbox_mutation_context.dart';
 import 'package:tmail_ui_user/features/mailbox/domain/usecases/clear_mailbox_interactor.dart';
 import 'package:tmail_ui_user/features/mailbox/domain/usecases/delete_multiple_mailbox_interactor.dart';
 import 'package:tmail_ui_user/features/mailbox_dashboard/presentation/providers/empty_folder_provider.dart';
@@ -40,6 +41,7 @@ void main() {
 
   final session = SessionFixtures.aliceSession;
   final accountId = AccountFixtures.aliceAccountId;
+  final mutationContext = MailboxMutationContext.fromOperation(session, accountId);
 
   final trashMailboxId = MailboxId(Id('trash-1'));
   final trashMailbox = PresentationMailbox(
@@ -203,7 +205,10 @@ void main() {
       );
 
       test('deletes subfolders even when mailbox has no emails', () async {
-        stubSubfoldersResult(Right(DeleteMultipleMailboxAllSuccess(childIds)));
+        stubSubfoldersResult(Right(DeleteMultipleMailboxAllSuccess(
+          childIds,
+          mutationContext: mutationContext,
+        )));
 
         await notifier.execute(
           session,
@@ -228,7 +233,10 @@ void main() {
 
         test('also deletes subfolders when childIds is not empty', () async {
           stubSubfoldersResult(
-            Right(DeleteMultipleMailboxAllSuccess(childIds)),
+            Right(DeleteMultipleMailboxAllSuccess(
+              childIds,
+              mutationContext: mutationContext,
+            )),
           );
 
           await notifier.execute(
@@ -249,7 +257,10 @@ void main() {
           'emits Success with subfoldersSomeDeleted when HasSomeSuccess',
           () async {
             stubSubfoldersResult(
-              Right(DeleteMultipleMailboxHasSomeSuccess(childIds)),
+              Right(DeleteMultipleMailboxHasSomeSuccess(
+                childIds,
+                mutationContext: mutationContext,
+              )),
             );
 
             await notifier.execute(
@@ -270,7 +281,9 @@ void main() {
         test(
           'emits Success with subfoldersDeleteFailed when subfolder deletion fails',
           () async {
-            stubSubfoldersResult(Left(DeleteMultipleMailboxAllFailure()));
+            stubSubfoldersResult(Left(DeleteMultipleMailboxAllFailure(
+              mutationContext: mutationContext,
+            )));
 
             await notifier.execute(
               session,

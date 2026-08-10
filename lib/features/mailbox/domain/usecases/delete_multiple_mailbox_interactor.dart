@@ -9,6 +9,7 @@ import 'package:jmap_dart_client/jmap/mail/mailbox/mailbox.dart';
 import 'package:model/extensions/mailbox_extension.dart';
 import 'package:model/mailbox/presentation_mailbox.dart';
 import 'package:tmail_ui_user/features/mailbox/domain/repository/mailbox_repository.dart';
+import 'package:tmail_ui_user/features/mailbox/domain/model/mailbox_mutation_context.dart';
 import 'package:tmail_ui_user/features/mailbox/domain/state/delete_multiple_mailbox_state.dart';
 
 class DeleteMultipleMailboxInteractor {
@@ -21,6 +22,7 @@ class DeleteMultipleMailboxInteractor {
     AccountId accountId,
     List<MailboxId> selectedMailboxIds,
   ) async* {
+    final mutationContext = MailboxMutationContext.fromOperation(session, accountId);
     try {
       yield Right<Failure, Success>(LoadingDeleteMultipleMailboxAll());
 
@@ -59,19 +61,21 @@ class DeleteMultipleMailboxInteractor {
       if (allSuccess) {
         yield Right<Failure, Success>(DeleteMultipleMailboxAllSuccess(
           listMailboxIdToDelete,
+          mutationContext: mutationContext,
           currentMailboxState: currentMailboxState,
         ));
       } else if (allFailed) {
-        yield Left<Failure, Success>(DeleteMultipleMailboxAllFailure());
+        yield Left<Failure, Success>(DeleteMultipleMailboxAllFailure(mutationContext: mutationContext));
       } else {
         yield Right<Failure, Success>(DeleteMultipleMailboxHasSomeSuccess(
           listMailboxIdToDelete,
+          mutationContext: mutationContext,
           currentMailboxState: currentMailboxState,
         ));
       }
     } catch (e) {
       logWarning('DeleteMultipleMailboxInteractor::execute(): exception: $e');
-      yield Left<Failure, Success>(DeleteMultipleMailboxFailure(e));
+      yield Left<Failure, Success>(DeleteMultipleMailboxFailure(e, mutationContext: mutationContext));
     }
   }
 

@@ -7,6 +7,7 @@ import 'package:jmap_dart_client/jmap/mail/mailbox/mailbox.dart';
 import 'package:mockito/annotations.dart';
 import 'package:mockito/mockito.dart';
 import 'package:tmail_ui_user/features/mailbox/domain/model/jmap_mailbox_response.dart';
+import 'package:tmail_ui_user/features/mailbox/domain/model/mailbox_mutation_context.dart';
 import 'package:tmail_ui_user/features/mailbox/domain/repository/mailbox_repository.dart';
 import 'package:jmap_dart_client/jmap/core/state.dart' as jmap;
 import 'package:tmail_ui_user/features/mailbox/domain/state/delete_multiple_mailbox_state.dart';
@@ -94,6 +95,12 @@ Matcher _emitsLoadingThen(dynamic result) => emitsInOrder([
   result,
 ]);
 
+final mutationContext = MailboxMutationContext(
+  session: SessionFixtures.aliceSession,
+  accountId: AccountFixtures.aliceAccountId,
+  primaryAccountId: AccountFixtures.aliceAccountId,
+);
+
 void main() {
   late MailboxRepository mailboxRepository;
   late DeleteMultipleMailboxInteractor deleteMultipleMailboxInteractor;
@@ -121,6 +128,7 @@ void main() {
           _executeDelete(deleteMultipleMailboxInteractor, MailboxFixtures.listMailboxIdsToDelete),
           _emitsLoadingThen(Right(DeleteMultipleMailboxAllSuccess(
             MailboxFixtures.listMailboxIdToDelete,
+            mutationContext: mutationContext,
             currentMailboxState: state,
           ))),
         );
@@ -140,7 +148,7 @@ void main() {
 
         expect(
           _executeDelete(deleteMultipleMailboxInteractor, MailboxFixtures.listMailboxIdsToDelete),
-          _emitsLoadingThen(Left(DeleteMultipleMailboxAllFailure())),
+          _emitsLoadingThen(Left(DeleteMultipleMailboxAllFailure(mutationContext: mutationContext))),
         );
       });
 
@@ -155,6 +163,7 @@ void main() {
           _executeDelete(deleteMultipleMailboxInteractor, MailboxFixtures.listMailboxIdsToDelete),
           _emitsLoadingThen(Right(DeleteMultipleMailboxHasSomeSuccess(
             MailboxFixtures.listMailboxIdToDelete,
+            mutationContext: mutationContext,
             currentMailboxState: state,
           ))),
         );
@@ -175,6 +184,7 @@ void main() {
         _executeDelete(deleteMultipleMailboxInteractor, []),
         _emitsLoadingThen(Right(DeleteMultipleMailboxAllSuccess(
           [],
+          mutationContext: mutationContext,
           currentMailboxState: state,
         ))),
       );
@@ -189,7 +199,7 @@ void main() {
 
       expect(
         _executeDelete(deleteMultipleMailboxInteractor, MailboxFixtures.listMailboxIdsToDelete),
-        _emitsLoadingThen(Left(DeleteMultipleMailboxFailure('error'))),
+        _emitsLoadingThen(Left(DeleteMultipleMailboxFailure('error', mutationContext: mutationContext))),
       );
     });
 
@@ -209,6 +219,7 @@ void main() {
         _executeDelete(deleteMultipleMailboxInteractor, [ghostMailboxId]),
         _emitsLoadingThen(Right(DeleteMultipleMailboxAllSuccess(
           [ghostMailboxId],
+          mutationContext: mutationContext,
           currentMailboxState: state,
         ))),
       );
@@ -228,6 +239,7 @@ void main() {
           _executeDelete(deleteMultipleMailboxInteractor, MailboxFixtures.listMailboxIdsForSubscribedOnly),
           _emitsLoadingThen(Right(DeleteMultipleMailboxAllSuccess(
             MailboxFixtures.expectedDeleteListSubscribedOnly,
+            mutationContext: mutationContext,
             currentMailboxState: state,
           ))),
         );
@@ -243,6 +255,7 @@ void main() {
           ]),
           _emitsLoadingThen(Right(DeleteMultipleMailboxAllSuccess(
             MailboxFixtures.expectedDeleteListSubscribedOnly,
+            mutationContext: mutationContext,
             currentMailboxState: state,
           ))),
         );
@@ -269,6 +282,7 @@ void main() {
         _executeDelete(deleteMultipleMailboxInteractor, [MailboxFixtures.parentFolder.id!]),
         _emitsLoadingThen(Right(DeleteMultipleMailboxAllSuccess(
           MailboxFixtures.expectedDeleteListThreeLevelNesting,
+          mutationContext: mutationContext,
           currentMailboxState: state,
         ))),
       );

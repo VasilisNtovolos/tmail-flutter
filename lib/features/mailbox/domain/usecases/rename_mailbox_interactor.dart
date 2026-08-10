@@ -5,6 +5,7 @@ import 'package:jmap_dart_client/jmap/account_id.dart';
 import 'package:jmap_dart_client/jmap/core/session/session.dart';
 import 'package:tmail_ui_user/features/mailbox/domain/exceptions/set_mailbox_name_exception.dart';
 import 'package:tmail_ui_user/features/mailbox/domain/model/rename_mailbox_request.dart';
+import 'package:tmail_ui_user/features/mailbox/domain/model/mailbox_mutation_context.dart';
 import 'package:tmail_ui_user/features/mailbox/domain/repository/mailbox_repository.dart';
 import 'package:tmail_ui_user/features/mailbox/domain/state/rename_mailbox_state.dart';
 
@@ -13,18 +14,26 @@ class RenameMailboxInteractor {
 
   RenameMailboxInteractor(this._mailboxRepository);
 
-  Stream<Either<Failure, Success>> execute(Session session, AccountId accountId, RenameMailboxRequest request) async* {
+  Stream<Either<Failure, Success>> execute(
+    Session session,
+    AccountId accountId,
+    RenameMailboxRequest request,
+  ) async* {
+    final mutationContext = MailboxMutationContext.fromOperation(session, accountId);
     try {
       yield Right<Failure, Success>(LoadingRenameMailbox());
       final result = await _mailboxRepository.renameMailbox(session, accountId, request);
       if (result) {
-        yield Right<Failure, Success>(RenameMailboxSuccess(request: request));
+        yield Right<Failure, Success>(RenameMailboxSuccess(
+          request: request,
+          mutationContext: mutationContext,
+        ));
       } else {
-        yield Left<Failure, Success>(RenameMailboxFailure(null));
+        yield Left<Failure, Success>(RenameMailboxFailure(null, mutationContext: mutationContext));
       }
     } catch (e) {
       final exception = SetMailboxNameException.detectMailboxNameException(e, request.mailboxId);
-      yield Left<Failure, Success>(RenameMailboxFailure(exception));
+      yield Left<Failure, Success>(RenameMailboxFailure(exception, mutationContext: mutationContext));
     }
   }
 }

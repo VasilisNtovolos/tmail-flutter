@@ -41,6 +41,7 @@ import 'package:tmail_ui_user/features/mailbox/domain/model/mailbox_right_reques
 import 'package:tmail_ui_user/features/mailbox/domain/model/mailbox_subaddressing_action.dart';
 import 'package:tmail_ui_user/features/mailbox/domain/model/mailbox_subscribe_action_state.dart';
 import 'package:tmail_ui_user/features/mailbox/domain/model/mailbox_subscribe_state.dart';
+import 'package:tmail_ui_user/features/mailbox/domain/model/mailbox_mutation_context.dart';
 import 'package:tmail_ui_user/features/mailbox/domain/model/move_mailbox_request.dart';
 import 'package:tmail_ui_user/features/mailbox/domain/model/rename_mailbox_request.dart';
 import 'package:tmail_ui_user/features/mailbox/domain/model/subscribe_mailbox_request.dart';
@@ -121,6 +122,42 @@ class _MailboxRouteResolution {
 
 class _SharedMailboxLoadToken {}
 
+class _SharedMailboxMutationReloadRequest {
+  final MailboxMutationContext mutationContext;
+  final Object? redirectGeneration;
+
+  const _SharedMailboxMutationReloadRequest(
+    this.mutationContext, {
+    this.redirectGeneration,
+  });
+}
+
+class _PendingNewFolderRedirect {
+  final MailboxIdentity identity;
+  final MailboxMutationContext mutationContext;
+  final Object generation;
+
+  const _PendingNewFolderRedirect({
+    required this.identity,
+    required this.mutationContext,
+    required this.generation,
+  });
+}
+
+class _PrimaryMailboxMutationReloadSuccess extends GetAllMailboxSuccess {
+  final MailboxMutationContext mutationContext;
+  final Object redirectGeneration;
+
+  _PrimaryMailboxMutationReloadSuccess(
+    GetAllMailboxSuccess success, {
+    required this.mutationContext,
+    required this.redirectGeneration,
+  }) : super(
+    mailboxList: success.mailboxList,
+    currentMailboxState: success.currentMailboxState,
+  );
+}
+
 class _SharedMailboxTreeCandidate {
   final Map<AccountId, List<PresentationMailbox>> sharedMailboxesByAccount;
   final MailboxCollection mailboxCollection;
@@ -165,10 +202,33 @@ class MailboxController extends BaseMailboxController
   final Map<AccountId, Future<void>> _sharedMailboxLoadOperations = {};
   final Map<AccountId, Session> _sharedMailboxLoadSessions = {};
   final Map<AccountId, _SharedMailboxLoadToken> _sharedMailboxLoadTokens = {};
+  final Map<AccountId, _SharedMailboxMutationReloadRequest>
+      _pendingSharedMailboxMutationReloads = {};
+  Future<void>? _sharedMailboxMutationReloadOperation;
+  bool _resumeSharedMailboxDiscoveryAfterMutation = false;
   bool _isClosed = false;
   @visibleForTesting
   bool suppressBrowserHistoryForTesting = false;
   String? _lastNavigationRouteForTesting;
+
+  @visibleForTesting
+  MailboxIdentity? get newFolderIdentityForTesting =>
+      _pendingNewFolderRedirect?.identity;
+
+  @visibleForTesting
+  bool get isClosedForTesting => _isClosed;
+
+  @visibleForTesting
+  Future<void> waitForSharedMailboxMutationReloadQueueForTesting() async {
+    while (true) {
+      final operation = _sharedMailboxMutationReloadOperation;
+      if (operation == null) return;
+      try {
+        await operation;
+      } catch (_) {}
+      await Future<void>.delayed(Duration.zero);
+    }
+  }
 
   IOSSharingManager? _iosSharingManager;
   late MailboxActionReactor mailboxActionReactor;
@@ -177,7 +237,7 @@ class MailboxController extends BaseMailboxController
   final _activeScrollBottom = RxBool(true);
   final foldersExpandMode = Rx(ExpandMode.EXPAND);
 
-  MailboxId? _newFolderId;
+  _PendingNewFolderRedirect? _pendingNewFolderRedirect;
   NavigationRouter? _navigationRouter;
   Session? _navigationRouterSession;
   AccountId? _navigationRouterPrimaryAccountId;
@@ -248,8 +308,11 @@ class MailboxController extends BaseMailboxController
   void onClose() {
     _isClosed = true;
     _clearNavigationRouter();
+    _pendingNewFolderRedirect = null;
     _sharedMailboxLoadTimer?.cancel();
     _sharedMailboxLoadTimer = null;
+    _pendingSharedMailboxMutationReloads.clear();
+    _resumeSharedMailboxDiscoveryAfterMutation = false;
     _openMailboxEventStreamSubscription?.cancel();
     _openMailboxEventStreamSubscription = null;
     _openMailboxEventController.close();
@@ -262,14 +325,28 @@ class MailboxController extends BaseMailboxController
 
   @override
   void handleSuccessViewState(Success success) {
-    if (success is GetAllMailboxSuccess) {
-      _handleGetAllMailboxSuccess(success);
+    if (success is _PrimaryMailboxMutationReloadSuccess) {
+      _handleGetAllMailboxSuccessSafely(
+        success,
+        mutationContext: success.mutationContext,
+        redirectGeneration: success.redirectGeneration,
+      );
+    } else if (success is GetAllMailboxSuccess) {
+      _handleGetAllMailboxSuccessSafely(success);
     } else if (success is CreateNewMailboxSuccess) {
       _createNewMailboxSuccess(success);
     } else if (success is DeleteMultipleMailboxAllSuccess) {
-      _deleteMultipleMailboxSuccess(success.listMailboxIdDeleted, success.currentMailboxState,);
+      _deleteMultipleMailboxSuccess(
+        success.listMailboxIdDeleted,
+        success.mutationContext,
+        success.currentMailboxState,
+      );
     } else if (success is DeleteMultipleMailboxHasSomeSuccess) {
-      _deleteMultipleMailboxSuccess(success.listMailboxIdDeleted, success.currentMailboxState,);
+      _deleteMultipleMailboxSuccess(
+        success.listMailboxIdDeleted,
+        success.mutationContext,
+        success.currentMailboxState,
+      );
     } else if (success is RenameMailboxSuccess) {
       _renameMailboxSuccess(success);
     } else if (success is MoveMailboxSuccess) {
@@ -299,10 +376,13 @@ class MailboxController extends BaseMailboxController
   @override
   void handleFailureViewState(Failure failure) {
     if (failure is CreateNewMailboxFailure) {
+      if (!_isMutationCompletionCurrent(failure.mutationContext)) return;
       _createNewMailboxFailure(failure);
     } else if (failure is RenameMailboxFailure) {
+      if (!_isMutationCompletionCurrent(failure.mutationContext)) return;
       _renameMailboxFailure(failure);
     } else if (failure is DeleteMultipleMailboxFailure) {
+      if (!_isMutationCompletionCurrent(failure.mutationContext)) return;
       _deleteMailboxFailure(failure);
     } else if (failure is SubaddressingFailure) {
       handleSubAddressingFailure(failure);
@@ -475,6 +555,8 @@ class MailboxController extends BaseMailboxController
   ) => !_isClosed &&
       identical(session, currentSession) &&
       accountId == primaryAccountId &&
+      currentSession.primaryAccounts[CapabilityIdentifier.jmapMail] ==
+          primaryAccountId &&
       currentSession.accounts.containsKey(sharedAccountId) &&
       CapabilityIdentifier.jmapMail.isSupported(
         currentSession,
@@ -567,6 +649,9 @@ class MailboxController extends BaseMailboxController
     mailboxDashBoardController.setOutboxMailbox(candidate.outboxMailbox);
   }
 
+  @protected
+  void beforeSharedMailboxTreeCandidateCommit() {}
+
   Future<void> _rebuildMailboxTree(
     List<PresentationMailbox> primaryMailboxes, {
     bool refresh = false,
@@ -610,6 +695,10 @@ class MailboxController extends BaseMailboxController
   }) {
     _sharedMailboxLoadTimer?.cancel();
     _sharedMailboxLoadTimer = Timer(delay, () {
+      if (_sharedMailboxMutationReloadOperation != null) {
+        _resumeSharedMailboxDiscoveryAfterMutation = true;
+        return;
+      }
       if (_isClosed ||
           !identical(session, currentSession) ||
           accountId != primaryAccountId) {
@@ -653,7 +742,12 @@ class MailboxController extends BaseMailboxController
             }
           }
         },
-      ));
+      ).catchError((Object error, StackTrace stackTrace) {
+        logWarning(
+          'MailboxController::_scheduleSharedMailboxLoad: '
+          'operation failed error=$error stackTrace=$stackTrace',
+        );
+      }));
     });
   }
 
@@ -807,8 +901,26 @@ class MailboxController extends BaseMailboxController
     if (action is SelectMailboxDefaultAction) {
       _switchBackToMailboxDefault();
       mailboxDashBoardController.clearMailboxUIAction();
+    } else if (action is RefreshMailboxAfterMutationAction) {
+      Object? redirectGeneration;
+      if (action.isCreate) {
+        redirectGeneration = action.eventToken;
+        _setPendingNewFolderRedirect(
+          action.mutationContext,
+          action.createdMailboxIdentity,
+          redirectGeneration,
+        );
+      }
+      _refreshAfterMailboxMutation(
+        action.mutationContext,
+        null,
+        redirectGeneration: redirectGeneration,
+      );
     } else if (action is RefreshChangeMailboxAction) {
-      _refreshMailboxChanges(newState: action.newState);
+      _refreshMailboxChanges(
+        newState: action.newState,
+        originatingAccountId: action.accountId,
+      );
     } else if (action is OpenMailboxAction) {
       _onOpenMailboxAction(action);
     } else if (action is SystemBackToInboxAction) {
@@ -967,13 +1079,24 @@ class MailboxController extends BaseMailboxController
     }
   }
 
-  void _refreshMailboxChanges({required jmap.State newState}) {
+  void _refreshMailboxChanges({
+    required jmap.State newState,
+    AccountId? originatingAccountId,
+  }) {
     log('MailboxController::_refreshMailboxChanges():newState: $newState');
     if (accountId == null ||
         session == null ||
         currentMailboxState == null ||
         currentMailboxState == newState) {
-      _newFolderId = null;
+      return;
+    }
+
+    if (originatingAccountId != null && originatingAccountId != accountId) {
+      final currentSession = session!;
+      final primaryAccountId = accountId!;
+      if (!currentSession.accounts.containsKey(originatingAccountId)) return;
+      _loadedSharedMailboxAccounts.remove(originatingAccountId);
+      _scheduleSharedMailboxLoad(currentSession, primaryAccountId);
       return;
     }
 
@@ -995,8 +1118,7 @@ class MailboxController extends BaseMailboxController
       if (refreshState is RefreshChangesAllMailboxSuccess) {
         await _handleRefreshChangeMailboxSuccess(refreshState);
       } else {
-        _clearNewFolderId();
-        if (refreshState != null) {
+      if (refreshState != null) {
           onDataFailureViewState(refreshState);
         }
       }
@@ -1028,9 +1150,6 @@ class MailboxController extends BaseMailboxController
     _selectSelectedMailboxDefault();
     mailboxDashBoardController.refreshSpamReportBanner();
 
-    if (_newFolderId != null) {
-      _redirectToNewFolder();
-    }
   }
 
   @override
@@ -1562,19 +1681,39 @@ class MailboxController extends BaseMailboxController
       : push(AppRoutes.mailboxCreator, arguments: arguments);
 
   void _createNewMailboxAction(Session session, AccountId accountId, CreateNewMailboxRequest request,) async {
-    consumeState(_createNewMailboxInteractor.execute(session, accountId, request),);
+    consumeState(_createNewMailboxInteractor.execute(
+      session,
+      accountId,
+      request,
+    ),);
   }
 
   void _createNewMailboxSuccess(CreateNewMailboxSuccess success) {
+    if (!_isMutationCompletionCurrent(success.mutationContext)) return;
+    final newMailboxId = success.newMailbox.id;
+    Object? redirectGeneration;
+    if (newMailboxId != null) {
+      redirectGeneration = Object();
+      _setPendingNewFolderRedirect(
+        success.mutationContext,
+        MailboxIdentity(success.mutationContext.accountId, newMailboxId),
+        redirectGeneration,
+      );
+    } else {
+      _clearPendingNewFolderRedirectForContext(success.mutationContext);
+    }
     if (currentOverlayContext != null && currentContext != null) {
       appToast.showToastSuccessMessage(
         currentOverlayContext!,
         AppLocalizations.of(currentContext!,).createFolderSuccessfullyMessage(success.newMailbox.name?.name ?? ''),
         leadingSVGIconColor: Colors.white,
         leadingSVGIcon: imagePaths.icFolderMailbox,);
-
-      _newFolderId = success.newMailbox.id;
     }
+    _refreshAfterMailboxMutation(
+      success.mutationContext,
+      success.currentMailboxState,
+      redirectGeneration: redirectGeneration,
+    );
   }
 
   void _createNewMailboxFailure(CreateNewMailboxFailure failure) {
@@ -1589,7 +1728,12 @@ class MailboxController extends BaseMailboxController
   }
 
   void _renameMailboxSuccess(RenameMailboxSuccess success) {
-    updateMailboxNameById(success.request.mailboxId, success.request.newName);
+    if (!_isMutationCompletionCurrent(success.mutationContext)) return;
+    updateMailboxName(
+      MailboxIdentity(success.mutationContext.accountId, success.request.mailboxId),
+      success.request.newName,
+    );
+    _refreshAfterMailboxMutation(success.mutationContext, null);
   }
 
   void _renameMailboxFailure(RenameMailboxFailure failure) {
@@ -1667,7 +1811,8 @@ class MailboxController extends BaseMailboxController
       consumeState(_deleteMultipleMailboxInteractor.execute(
         operationSession,
         operationAccountId,
-        [presentationMailbox.id,]),);
+        [presentationMailbox.id,],
+      ),);
       popBack();
     } else {
       return;
@@ -1675,19 +1820,30 @@ class MailboxController extends BaseMailboxController
   }
 
   void _deleteMultipleMailboxSuccess(
-      List<MailboxId> listMailboxIdDeleted,
-      jmap.State? currentMailboxState,
+    List<MailboxId> listMailboxIdDeleted,
+    MailboxMutationContext mutationContext,
+    jmap.State? previousMailboxState,
   ) {
+    if (!_isMutationCompletionCurrent(mutationContext)) return;
     if (currentOverlayContext != null && currentContext != null) {
       appToast.showToastSuccessMessage(
         currentOverlayContext!,
         AppLocalizations.of(currentContext!).deleteFoldersSuccessfully,);
     }
 
-    if (listMailboxIdDeleted.contains(selectedMailbox?.id)) {
+    mailboxDashBoardController.removeMailboxesFromMap(
+      mutationContext.accountId,
+      listMailboxIdDeleted,
+    );
+    final selectedIdentity = selectedMailbox == null
+        ? null
+        : mailboxIdentity(selectedMailbox!);
+    if (selectedIdentity?.accountId == mutationContext.accountId
+        && listMailboxIdDeleted.contains(selectedIdentity?.mailboxId)) {
       _switchBackToMailboxDefault();
       _closeEmailViewIfMailboxDisabledOrNotExist(listMailboxIdDeleted);
     }
+    _refreshAfterMailboxMutation(mutationContext, previousMailboxState);
   }
 
   void _switchBackToMailboxDefault() {
@@ -1747,6 +1903,8 @@ class MailboxController extends BaseMailboxController
   }
 
   void _moveMailboxSuccess(MoveMailboxSuccess success) {
+    if (!_isMutationCompletionCurrent(success.mutationContext)) return;
+    _refreshAfterMailboxMutation(success.mutationContext, null);
     if (success.moveAction == MoveAction.moving
         && currentOverlayContext != null
         && currentContext != null) {
@@ -1756,7 +1914,7 @@ class MailboxController extends BaseMailboxController
               success.destinationMailboxDisplayName ?? AppLocalizations.of(currentContext!).allFolders,),
           actionName: AppLocalizations.of(currentContext!).undo,
           onActionClick: () {
-            _undoMovingMailbox(MoveMailboxRequest(
+            _undoMovingMailbox(success.mutationContext, MoveMailboxRequest(
                 success.mailboxIdSelected,
                 MoveAction.undo,
                 destinationMailboxId: success.parentId,
@@ -1771,12 +1929,16 @@ class MailboxController extends BaseMailboxController
     }
   }
 
-  void _undoMovingMailbox(MoveMailboxRequest newMoveRequest) {
-    if (session != null && accountId != null) {
+  void _undoMovingMailbox(
+    MailboxMutationContext mutationContext,
+    MoveMailboxRequest newMoveRequest,
+  ) {
+    if (_isMutationUndoCurrent(mutationContext)) {
       consumeState(_moveMailboxInteractor.execute(
-        session!,
-        accountId!,
-        newMoveRequest),);
+        mutationContext.session,
+        mutationContext.accountId,
+        newMoveRequest,
+      ),);
     }
   }
 
@@ -1987,6 +2149,358 @@ class MailboxController extends BaseMailboxController
     AccountId? primaryAccountId,
   ) => identical(session, operationSession) && accountId == primaryAccountId;
 
+  bool _isMutationCompletionCurrent(MailboxMutationContext mutationContext) =>
+      !_isClosed &&
+      identical(session, mutationContext.session) &&
+      accountId == mutationContext.primaryAccountId &&
+      mutationContext.session
+              .primaryAccounts[CapabilityIdentifier.jmapMail] ==
+          mutationContext.primaryAccountId &&
+      mutationContext.session.accounts.containsKey(mutationContext.accountId);
+
+  bool _isMutationUndoCurrent(MailboxMutationContext mutationContext) =>
+      !_isClosed &&
+      identical(session, mutationContext.session) &&
+      mutationContext.session.accounts.containsKey(mutationContext.accountId);
+
+  bool _isSelectedMailbox(AccountId accountId, MailboxId mailboxId) {
+    final currentSelectedMailbox = selectedMailbox;
+    return currentSelectedMailbox != null &&
+        mailboxIdentity(currentSelectedMailbox) == MailboxIdentity(accountId, mailboxId);
+  }
+
+  bool _isSelectedMailboxIn(AccountId accountId, List<MailboxId> mailboxIds) {
+    final currentSelectedMailbox = selectedMailbox;
+    if (currentSelectedMailbox == null) return false;
+    final identity = mailboxIdentity(currentSelectedMailbox);
+    return identity.accountId == accountId && mailboxIds.contains(identity.mailboxId);
+  }
+
+  void _refreshAfterMailboxMutation(
+    MailboxMutationContext mutationContext,
+    jmap.State? previousMailboxState, {
+    Object? redirectGeneration,
+  }) {
+    if (!_isMutationCompletionCurrent(mutationContext)) {
+      _clearPendingNewFolderRedirect(
+        mutationContext,
+        redirectGeneration,
+      );
+      return;
+    }
+    final primaryAccountId = mutationContext.primaryAccountId;
+    if (mutationContext.accountId == primaryAccountId) {
+      if (redirectGeneration == null) {
+        refreshAllMailbox();
+      } else {
+        consumeState(_primaryMailboxMutationReloadStream(
+          mutationContext,
+          redirectGeneration,
+        ));
+      }
+      return;
+    }
+    if (primaryAccountId == null) {
+      _clearPendingNewFolderRedirect(
+        mutationContext,
+        redirectGeneration,
+      );
+      return;
+    }
+    _queueSharedMailboxMutationReload(
+      mutationContext,
+      redirectGeneration: redirectGeneration,
+    );
+  }
+
+  Stream<Either<Failure, Success>> _primaryMailboxMutationReloadStream(
+    MailboxMutationContext mutationContext,
+    Object redirectGeneration,
+  ) async* {
+    try {
+      await for (final result in getAllMailboxInteractor!.execute(
+        mutationContext.session,
+        mutationContext.accountId,
+      )) {
+        if (!_isMutationCompletionCurrent(mutationContext)) {
+          _clearPendingNewFolderRedirect(
+            mutationContext,
+            redirectGeneration,
+          );
+          return;
+        }
+        yield result.fold(
+          (failure) {
+            _clearPendingNewFolderRedirect(
+              mutationContext,
+              redirectGeneration,
+            );
+            return Left<Failure, Success>(failure);
+          },
+          (success) {
+            if (success is GetAllMailboxSuccess) {
+              return Right<Failure, Success>(
+                _PrimaryMailboxMutationReloadSuccess(
+                  success,
+                  mutationContext: mutationContext,
+                  redirectGeneration: redirectGeneration,
+                ),
+              );
+            }
+            return Right<Failure, Success>(success);
+          },
+        );
+      }
+    } catch (error) {
+      _clearPendingNewFolderRedirect(
+        mutationContext,
+        redirectGeneration,
+      );
+      rethrow;
+    }
+  }
+
+  void _queueSharedMailboxMutationReload(
+    MailboxMutationContext mutationContext, {
+    Object? redirectGeneration,
+  }) {
+    final effectiveRedirectGeneration = redirectGeneration ??
+        _pendingRedirectGenerationFor(mutationContext);
+    if (!_isMutationCompletionCurrent(mutationContext)) {
+      _clearPendingNewFolderRedirect(
+        mutationContext,
+        effectiveRedirectGeneration,
+      );
+      return;
+    }
+    if (_sharedMailboxLoadTimer?.isActive == true) {
+      _resumeSharedMailboxDiscoveryAfterMutation = true;
+    }
+    _sharedMailboxLoadTimer?.cancel();
+    _sharedMailboxLoadTimer = null;
+    _pendingSharedMailboxMutationReloads[mutationContext.accountId] =
+        _SharedMailboxMutationReloadRequest(
+          mutationContext,
+          redirectGeneration: effectiveRedirectGeneration,
+        );
+    _startSharedMailboxMutationReloadQueue();
+  }
+
+  void _startSharedMailboxMutationReloadQueue() {
+    if (_isClosed ||
+        _sharedMailboxMutationReloadOperation != null ||
+        _pendingSharedMailboxMutationReloads.isEmpty) {
+      return;
+    }
+
+    final operation = _drainSharedMailboxMutationReloadQueue();
+    _sharedMailboxMutationReloadOperation = operation;
+    unawaited(_observeSharedMailboxMutationReloadOperation(
+      operation,
+    ).catchError((Object error, StackTrace stackTrace) {
+      logWarning(
+        'MailboxController::_startSharedMailboxMutationReloadQueue: '
+        'observer failed error=$error stackTrace=$stackTrace',
+      );
+    }));
+  }
+
+  Future<void> _observeSharedMailboxMutationReloadOperation(
+    Future<void> operation,
+  ) async {
+    try {
+      await operation;
+    } catch (error, stackTrace) {
+      logWarning(
+        'MailboxController::_observeSharedMailboxMutationReloadOperation: '
+        'operation failed error=$error stackTrace=$stackTrace',
+      );
+    } finally {
+      _finishSharedMailboxMutationReloadOperation(operation);
+    }
+  }
+
+  void _finishSharedMailboxMutationReloadOperation(Future<void> operation) {
+    if (!identical(_sharedMailboxMutationReloadOperation, operation)) return;
+    _sharedMailboxMutationReloadOperation = null;
+    if (_isClosed) return;
+    if (_pendingSharedMailboxMutationReloads.isNotEmpty) {
+      _startSharedMailboxMutationReloadQueue();
+      return;
+    }
+    if (_resumeSharedMailboxDiscoveryAfterMutation) {
+      _resumeSharedMailboxDiscoveryAfterMutation = false;
+      final currentSession = session;
+      final currentPrimaryAccountId = accountId;
+      if (currentSession != null && currentPrimaryAccountId != null) {
+        _scheduleSharedMailboxLoad(
+          currentSession,
+          currentPrimaryAccountId,
+        );
+      }
+    }
+  }
+
+  Future<void> _drainSharedMailboxMutationReloadQueue() async {
+    while (!_isClosed && _pendingSharedMailboxMutationReloads.isNotEmpty) {
+      final entry = _pendingSharedMailboxMutationReloads.entries.first;
+      final request = entry.value;
+      final mutationContext = request.mutationContext;
+      _pendingSharedMailboxMutationReloads.remove(entry.key);
+      if (!_isMutationCompletionCurrent(mutationContext)) {
+        _clearPendingNewFolderRedirect(
+          mutationContext,
+          request.redirectGeneration,
+        );
+        continue;
+      }
+
+      try {
+        final primaryAccountId = mutationContext.primaryAccountId;
+        if (primaryAccountId == null) continue;
+        final discoveryOperation =
+            _sharedMailboxLoadOperations[primaryAccountId];
+        if (discoveryOperation != null &&
+            identical(
+              _sharedMailboxLoadSessions[primaryAccountId],
+              mutationContext.session,
+            )) {
+          try {
+            await discoveryOperation;
+          } catch (error, stackTrace) {
+            logWarning(
+              'MailboxController::_drainSharedMailboxMutationReloadQueue: '
+              'discovery failed error=$error stackTrace=$stackTrace',
+            );
+          }
+        }
+        if (!_isMutationCompletionCurrent(mutationContext)) {
+          _clearPendingNewFolderRedirect(
+            mutationContext,
+            request.redirectGeneration,
+          );
+          continue;
+        }
+
+        _loadedSharedMailboxAccounts.remove(mutationContext.accountId);
+        final didReload = await _reloadSharedMailboxAfterMutation(request);
+        if (!didReload) {
+          _clearPendingNewFolderRedirect(
+            mutationContext,
+            request.redirectGeneration,
+          );
+        }
+      } catch (error, stackTrace) {
+        _clearPendingNewFolderRedirect(
+          mutationContext,
+          request.redirectGeneration,
+        );
+        logWarning(
+          'MailboxController::_drainSharedMailboxMutationReloadQueue: '
+          'request failed account=${mutationContext.accountId.asString} '
+          'error=$error stackTrace=$stackTrace',
+        );
+      }
+    }
+  }
+
+  Future<bool> _reloadSharedMailboxAfterMutation(
+    _SharedMailboxMutationReloadRequest request,
+  ) async {
+    final mutationContext = request.mutationContext;
+    final operationSession = mutationContext.session;
+    final sharedAccountId = mutationContext.accountId;
+    if (!_isMutationCompletionCurrent(mutationContext) ||
+        !CapabilityIdentifier.jmapMail.isSupported(
+          operationSession,
+          sharedAccountId,
+        )) {
+      return false;
+    }
+
+    List<PresentationMailbox>? pendingAccountMailboxes;
+    var loadFailed = false;
+    try {
+      await for (final result in _sharedMailboxGetAllMailboxInteractor.execute(
+        operationSession,
+        sharedAccountId,
+      )) {
+        result.fold(
+          (failure) {
+            loadFailed = true;
+            logWarning(
+              'MailboxController::_reloadSharedMailboxAfterMutation: failure '
+              'account=${sharedAccountId.asString} failure=$failure',
+            );
+          },
+          (success) {
+            if (success is! GetAllMailboxSuccess) return;
+            final jmapAccountName =
+                operationSession.accounts[sharedAccountId]?.name.value.trim();
+            final accountName = jmapAccountName?.isNotEmpty == true
+                ? jmapAccountName
+                : sharedAccountId.asString;
+            pendingAccountMailboxes = success.mailboxList
+                .map(
+                  (mailbox) => mailbox.copyWith(
+                    accountId: sharedAccountId,
+                    isSharedAccount: true,
+                    sharedAccountName: accountName,
+                    namespace: mailbox.namespace ??
+                        Namespace('Shared[${sharedAccountId.asString}]'),
+                  ),
+                )
+                .toList();
+          },
+        );
+      }
+    } catch (error, stackTrace) {
+      loadFailed = true;
+      logWarning(
+        'MailboxController::_reloadSharedMailboxAfterMutation: stream failed '
+        'account=${sharedAccountId.asString} '
+        'error=$error stackTrace=$stackTrace',
+      );
+    }
+    if (loadFailed ||
+        pendingAccountMailboxes == null ||
+        !_isMutationCompletionCurrent(mutationContext)) {
+      return false;
+    }
+
+    final candidateSharedMailboxes =
+        Map<AccountId, List<PresentationMailbox>>.from(
+      _sharedMailboxesByAccount,
+    )..[sharedAccountId] = pendingAccountMailboxes!;
+    late final _SharedMailboxTreeCandidate candidate;
+    try {
+      candidate = await _prepareSharedMailboxTreeCandidate(
+        allMailboxes,
+        candidateSharedMailboxes,
+      );
+    } catch (error, stackTrace) {
+      logWarning(
+        'MailboxController::_reloadSharedMailboxAfterMutation: '
+        'tree candidate failed account=${sharedAccountId.asString} '
+        'error=$error stackTrace=$stackTrace',
+      );
+      return false;
+    }
+    if (!_isMutationCompletionCurrent(mutationContext)) return false;
+
+    beforeSharedMailboxTreeCandidateCommit();
+    _commitSharedMailboxTreeCandidate(candidate);
+    _loadedSharedMailboxAccounts.add(sharedAccountId);
+    _consumePendingNewFolderRedirect(
+      mutationContext,
+      request.redirectGeneration,
+    );
+    if (_navigationRouter != null) {
+      _handleDataFromNavigationRouter();
+    }
+    return true;
+  }
+
   void _replaceBrowserHistory() {
     final currentMailbox = selectedMailbox;
     log('MailboxController::_replaceBrowserHistory:selectedMailbox: ${currentMailbox?.id.asString}',);
@@ -2040,15 +2554,64 @@ class MailboxController extends BaseMailboxController
       curve: Curves.fastOutSlowIn,);
   }
 
-  Future<void> _handleGetAllMailboxSuccess(GetAllMailboxSuccess success) async {
+  void _handleGetAllMailboxSuccessSafely(
+    GetAllMailboxSuccess success, {
+    MailboxMutationContext? mutationContext,
+    Object? redirectGeneration,
+  }) {
+    unawaited(_handleGetAllMailboxSuccess(
+      success,
+      mutationContext: mutationContext,
+      redirectGeneration: redirectGeneration,
+    ).catchError((Object error, StackTrace stackTrace) {
+      if (mutationContext != null) {
+        _clearPendingNewFolderRedirect(
+          mutationContext,
+          redirectGeneration,
+        );
+      }
+      logWarning(
+        'MailboxController::_handleGetAllMailboxSuccess: '
+        'failed error=$error stackTrace=$stackTrace',
+      );
+    }));
+  }
+
+  Future<void> _handleGetAllMailboxSuccess(
+    GetAllMailboxSuccess success, {
+    MailboxMutationContext? mutationContext,
+    Object? redirectGeneration,
+  }) async {
+    if (mutationContext != null &&
+        !_isMutationCompletionCurrent(mutationContext)) {
+      _clearPendingNewFolderRedirect(
+        mutationContext,
+        redirectGeneration,
+      );
+      return;
+    }
     currentMailboxState = success.currentMailboxState;
     log('MailboxController::_handleGetAllMailboxSuccess:currentMailboxState: $currentMailboxState',);
     final listMailboxDisplayed = success.mailboxList.listSubscribedMailboxesAndDefaultMailboxes;
     await _rebuildMailboxTree(listMailboxDisplayed.withoutVirtualMailbox);
     final currentSession = session;
     final primaryAccountId = accountId;
+    if (mutationContext != null &&
+        !_isMutationCompletionCurrent(mutationContext)) {
+      _clearPendingNewFolderRedirect(
+        mutationContext,
+        redirectGeneration,
+      );
+      return;
+    }
     if (currentSession != null && primaryAccountId != null) {
       _scheduleSharedMailboxLoad(currentSession, primaryAccountId);
+      if (mutationContext != null) {
+        _consumePendingNewFolderRedirect(
+          mutationContext,
+          redirectGeneration,
+        );
+      }
     }
   }
 
@@ -2100,42 +2663,59 @@ class MailboxController extends BaseMailboxController
   }
 
   void _handleUnsubscribeMailboxSuccess(SubscribeMailboxSuccess success) {
+    if (!_isMutationCompletionCurrent(success.mutationContext)) return;
     if (success.subscribeAction == MailboxSubscribeAction.unSubscribe) {
-      _showToastSubscribeMailboxSuccess(success.mailboxId);
+      _showToastSubscribeMailboxSuccess(
+        success.mutationContext,
+        success.mailboxId,
+      );
 
-      if (success.mailboxId == selectedMailbox?.id) {
+      if (_isSelectedMailbox(success.mutationContext.accountId, success.mailboxId)) {
         _switchBackToMailboxDefault();
         _closeEmailViewIfMailboxDisabledOrNotExist([success.mailboxId]);
       }
     }
+    _refreshAfterMailboxMutation(success.mutationContext, success.currentMailboxState);
   }
 
   void _handleUnsubscribeMultipleMailboxAllSuccess(SubscribeMultipleMailboxAllSuccess success,) {
+    if (!_isMutationCompletionCurrent(success.mutationContext)) return;
     if(success.subscribeAction == MailboxSubscribeAction.unSubscribe) {
       _showToastSubscribeMailboxSuccess(
+        success.mutationContext,
         success.parentMailboxId,
         listDescendantMailboxIds: success.mailboxIdsSubscribe,
       );
 
-      if (success.mailboxIdsSubscribe.contains(selectedMailbox?.id)) {
+      if (_isSelectedMailboxIn(
+        success.mutationContext.accountId,
+        success.mailboxIdsSubscribe,
+      )) {
         _switchBackToMailboxDefault();
         _closeEmailViewIfMailboxDisabledOrNotExist(success.mailboxIdsSubscribe);
       }
     }
+    _refreshAfterMailboxMutation(success.mutationContext, success.currentMailboxState);
   }
 
   void _handleUnsubscribeMultipleMailboxHasSomeSuccess(SubscribeMultipleMailboxHasSomeSuccess success,) {
+    if (!_isMutationCompletionCurrent(success.mutationContext)) return;
     if(success.subscribeAction == MailboxSubscribeAction.unSubscribe) {
       _showToastSubscribeMailboxSuccess(
+        success.mutationContext,
         success.parentMailboxId,
         listDescendantMailboxIds: success.mailboxIdsSubscribe,
       );
 
-      if (success.mailboxIdsSubscribe.contains(selectedMailbox?.id)) {
+      if (_isSelectedMailboxIn(
+        success.mutationContext.accountId,
+        success.mailboxIdsSubscribe,
+      )) {
         _switchBackToMailboxDefault();
         _closeEmailViewIfMailboxDisabledOrNotExist(success.mailboxIdsSubscribe);
       }
     }
+    _refreshAfterMailboxMutation(success.mutationContext, success.currentMailboxState);
   }
 
   void _closeEmailViewIfMailboxDisabledOrNotExist(List<MailboxId> mailboxIdsDisabled,) {
@@ -2151,6 +2731,7 @@ class MailboxController extends BaseMailboxController
   }
 
   void _showToastSubscribeMailboxSuccess(
+      MailboxMutationContext mutationContext,
       MailboxId mailboxIdSubscribed,
       {List<MailboxId>? listDescendantMailboxIds,}
   ) {
@@ -2160,6 +2741,7 @@ class MailboxController extends BaseMailboxController
         AppLocalizations.of(currentContext!).toastMsgHideFolderSuccess,
         actionName: AppLocalizations.of(currentContext!).undo,
         onActionClick: () => _undoUnsubscribeMailboxAction(
+          mutationContext,
           mailboxIdSubscribed,
           listDescendantMailboxIds: listDescendantMailboxIds,
         ),
@@ -2172,10 +2754,11 @@ class MailboxController extends BaseMailboxController
   }
 
   void _undoUnsubscribeMailboxAction(
+    MailboxMutationContext mutationContext,
     MailboxId mailboxIdSubscribed,
     {List<MailboxId>? listDescendantMailboxIds,}
   ) {
-    if (session != null && accountId != null) {
+    if (_isMutationUndoCurrent(mutationContext)) {
       SubscribeRequest? subscribeRequest;
 
       if (listDescendantMailboxIds != null) {
@@ -2195,14 +2778,14 @@ class MailboxController extends BaseMailboxController
 
       if (subscribeRequest is SubscribeMultipleMailboxRequest) {
         consumeState(_subscribeMultipleMailboxInteractor.execute(
-          session!,
-          accountId!,
+          mutationContext.session,
+          mutationContext.accountId,
           subscribeRequest,
         ),);
       } else if (subscribeRequest is SubscribeMailboxRequest) {
         consumeState(_subscribeMailboxInteractor.execute(
-          session!,
-          accountId!,
+          mutationContext.session,
+          mutationContext.accountId,
           subscribeRequest,
         ),);
       }
@@ -2283,17 +2866,107 @@ class MailboxController extends BaseMailboxController
     mailboxDashBoardController.dispatchRoute(DashboardRoutes.sendingQueue);
   }
 
-  void _clearNewFolderId() {
-    _newFolderId = null;
+  bool _isSameMutationContext(
+    MailboxMutationContext first,
+    MailboxMutationContext second,
+  ) => identical(first.session, second.session) &&
+      first.accountId == second.accountId &&
+      first.primaryAccountId == second.primaryAccountId;
+
+  Object? _pendingRedirectGenerationFor(
+    MailboxMutationContext mutationContext,
+  ) {
+    final pendingRedirect = _pendingNewFolderRedirect;
+    if (pendingRedirect == null ||
+        !_isSameMutationContext(
+          pendingRedirect.mutationContext,
+          mutationContext,
+        )) {
+      return null;
+    }
+    return pendingRedirect.generation;
   }
 
-  void _redirectToNewFolder() {
-    final newMailboxNode = findMailboxNodeById(_newFolderId!);
-    log('MailboxController::_redirectToNewFolder:newMailboxNode: $newMailboxNode',);
-    if (newMailboxNode != null && currentContext != null) {
-      _handleOpenMailbox(currentContext!, newMailboxNode.item);
+  void _setPendingNewFolderRedirect(
+    MailboxMutationContext mutationContext,
+    MailboxIdentity? identity,
+    Object generation,
+  ) {
+    if (!_isMutationCompletionCurrent(mutationContext) ||
+        identity == null ||
+        identity.accountId != mutationContext.accountId) {
+      _clearPendingNewFolderRedirectForContext(mutationContext);
+      return;
     }
-    _clearNewFolderId();
+    _pendingNewFolderRedirect = _PendingNewFolderRedirect(
+      identity: identity,
+      mutationContext: mutationContext,
+      generation: generation,
+    );
+  }
+
+  void _clearPendingNewFolderRedirectForContext(
+    MailboxMutationContext mutationContext,
+  ) {
+    final pendingRedirect = _pendingNewFolderRedirect;
+    if (pendingRedirect != null &&
+        _isSameMutationContext(
+          pendingRedirect.mutationContext,
+          mutationContext,
+        )) {
+      _pendingNewFolderRedirect = null;
+    }
+  }
+
+  void _clearPendingNewFolderRedirect(
+    MailboxMutationContext mutationContext,
+    Object? redirectGeneration,
+  ) {
+    final pendingRedirect = _pendingNewFolderRedirect;
+    if (pendingRedirect == null ||
+        redirectGeneration == null ||
+        !identical(pendingRedirect.generation, redirectGeneration) ||
+        !_isSameMutationContext(
+          pendingRedirect.mutationContext,
+          mutationContext,
+        )) {
+      return;
+    }
+    _pendingNewFolderRedirect = null;
+  }
+
+  void _consumePendingNewFolderRedirect(
+    MailboxMutationContext mutationContext,
+    Object? redirectGeneration,
+  ) {
+    final pendingRedirect = _pendingNewFolderRedirect;
+    if (pendingRedirect == null ||
+        redirectGeneration == null ||
+        !identical(pendingRedirect.generation, redirectGeneration) ||
+        !_isSameMutationContext(
+          pendingRedirect.mutationContext,
+          mutationContext,
+        )) {
+      return;
+    }
+    try {
+      if (!_isMutationCompletionCurrent(mutationContext)) return;
+      final newMailboxNode = findMailboxNodeByIdentity(
+        pendingRedirect.identity,
+      );
+      log(
+        'MailboxController::_consumePendingNewFolderRedirect:'
+        'newMailboxNode=$newMailboxNode',
+      );
+      if (newMailboxNode != null && currentContext != null) {
+        _handleOpenMailbox(currentContext!, newMailboxNode.item);
+      }
+    } finally {
+      _clearPendingNewFolderRedirect(
+        mutationContext,
+        redirectGeneration,
+      );
+    }
   }
 
   void _autoScrollToTopMailboxList() {

@@ -33,6 +33,7 @@ import 'package:core/utils/platform_info.dart';
 import 'package:model/email/email_action_type.dart';
 import 'package:receive_sharing_intent/receive_sharing_intent.dart';
 import 'package:rxdart/subjects.dart';
+import 'package:tmail_ui_user/features/email/domain/model/move_action.dart';
 import 'package:tmail_ui_user/features/email/presentation/model/composer_arguments.dart';
 import 'package:tmail_ui_user/features/base/extensions/handle_mailbox_action_type_extension.dart';
 import 'package:tmail_ui_user/features/base/base_mailbox_controller.dart';
@@ -74,11 +75,24 @@ import 'package:tmail_ui_user/features/mailbox/domain/usecases/move_folder_conte
 import 'package:tmail_ui_user/features/mailbox/domain/usecases/move_mailbox_interactor.dart';
 import 'package:tmail_ui_user/features/mailbox/domain/usecases/refresh_all_mailbox_interactor.dart';
 import 'package:tmail_ui_user/features/mailbox/domain/usecases/rename_mailbox_interactor.dart';
+import 'package:tmail_ui_user/features/mailbox/domain/usecases/search_mailbox_interactor.dart';
 import 'package:tmail_ui_user/features/mailbox/domain/usecases/subaddressing_interactor.dart';
 import 'package:tmail_ui_user/features/mailbox/domain/model/mailbox_right_request.dart';
 import 'package:tmail_ui_user/features/mailbox/domain/model/move_mailbox_request.dart';
 import 'package:tmail_ui_user/features/mailbox/domain/model/rename_mailbox_request.dart';
 import 'package:tmail_ui_user/features/mailbox/domain/model/create_new_mailbox_request.dart';
+import 'package:tmail_ui_user/features/mailbox/domain/model/mailbox_subscribe_action_state.dart';
+import 'package:tmail_ui_user/features/mailbox/domain/model/mailbox_subscribe_state.dart';
+import 'package:tmail_ui_user/features/mailbox/domain/model/mailbox_mutation_context.dart';
+import 'package:tmail_ui_user/features/mailbox/domain/model/subscribe_mailbox_request.dart';
+import 'package:tmail_ui_user/features/mailbox/domain/state/create_new_mailbox_state.dart';
+import 'package:tmail_ui_user/features/mailbox/domain/state/delete_multiple_mailbox_state.dart';
+import 'package:tmail_ui_user/features/mailbox/domain/state/move_mailbox_state.dart';
+import 'package:tmail_ui_user/features/mailbox/domain/state/refresh_changes_all_mailboxes_state.dart';
+import 'package:tmail_ui_user/features/mailbox/presentation/action/mailbox_ui_action.dart';
+import 'package:tmail_ui_user/features/mailbox/domain/state/rename_mailbox_state.dart';
+import 'package:tmail_ui_user/features/mailbox/domain/state/subscribe_mailbox_state.dart';
+import 'package:tmail_ui_user/features/mailbox/domain/state/subscribe_multiple_mailbox_state.dart';
 import 'package:tmail_ui_user/features/mailbox/presentation/model/mailbox_actions.dart';
 import 'package:tmail_ui_user/features/mailbox/domain/usecases/subscribe_mailbox_interactor.dart';
 import 'package:tmail_ui_user/features/mailbox/domain/usecases/subscribe_multiple_mailbox_interactor.dart';
@@ -105,6 +119,8 @@ import 'package:tmail_ui_user/features/mailbox_dashboard/presentation/controller
 import 'package:tmail_ui_user/features/mailbox_dashboard/presentation/controller/app_grid_dashboard_controller.dart';
 import 'package:tmail_ui_user/features/mailbox_dashboard/presentation/controller/mailbox_dashboard_controller.dart';
 import 'package:tmail_ui_user/features/mailbox_dashboard/presentation/controller/search_controller.dart';
+import 'package:tmail_ui_user/features/search/mailbox/presentation/search_mailbox_controller.dart'
+    as mailbox_search;
 import 'package:tmail_ui_user/features/mailbox_dashboard/presentation/controller/spam_report_controller.dart';
 import 'package:tmail_ui_user/features/mailbox_dashboard/presentation/model/search/email_receive_time_type.dart';
 import 'package:tmail_ui_user/features/mailbox_dashboard/presentation/model/search/email_sort_order_type.dart';
@@ -143,6 +159,7 @@ import 'package:tmail_ui_user/main/bindings/network/binding_tag.dart';
 import 'package:tmail_ui_user/main/utils/email_receive_manager.dart';
 import 'package:tmail_ui_user/main/utils/toast_manager.dart';
 import 'package:tmail_ui_user/main/utils/twake_app_manager.dart';
+import 'package:tmail_ui_user/main/localizations/app_localizations.dart';
 import 'package:uuid/uuid.dart';
 
 import 'mailbox_dashboard_controller_test.mocks.dart';
@@ -153,12 +170,17 @@ const fallbackGenerators = {
   #onDelete: mockControllerCallback,
 };
 
+class _MockSearchMailboxInteractor extends Mock
+    implements SearchMailboxInteractor {}
+
 class _TestMailboxController extends MailboxController {
   DeleteMailboxActionCallback? deleteCallback;
   RenameMailboxActionCallback? renameCallback;
   MovingMailboxActionCallback? moveCallback;
   AllowSubaddressingActionCallback? subaddressingCallback;
   Completer<dynamic>? mailboxCreatorCompleter;
+  bool _didCallOnReady = false;
+  bool failNextSharedMailboxCommit = false;
 
   _TestMailboxController(
     super.createNewMailboxInteractor,
@@ -175,6 +197,13 @@ class _TestMailboxController extends MailboxController {
     super.getAllMailboxInteractor,
     super.refreshAllMailboxInteractor,
   );
+
+  @override
+  void onReady() {
+    if (_didCallOnReady) return;
+    _didCallOnReady = true;
+    super.onReady();
+  }
 
   @override
   void openConfirmationDialogDeleteMailboxAction(
@@ -223,6 +252,27 @@ class _TestMailboxController extends MailboxController {
   }) {
     subaddressingCallback = onAllowSubAddressingAction;
   }
+
+  @override
+  void beforeSharedMailboxTreeCandidateCommit() {
+    if (failNextSharedMailboxCommit) {
+      failNextSharedMailboxCommit = false;
+      throw StateError('injected shared mailbox commit failure');
+    }
+  }
+}
+
+class _TestAppLocalizationsDelegate extends LocalizationsDelegate<AppLocalizations> {
+  const _TestAppLocalizationsDelegate();
+
+  @override
+  bool isSupported(Locale locale) => true;
+
+  @override
+  Future<AppLocalizations> load(Locale locale) => AppLocalizations.load(locale);
+
+  @override
+  bool shouldReload(LocalizationsDelegate<AppLocalizations> old) => false;
 }
 
 @GenerateNiceMocks([
@@ -471,6 +521,76 @@ void main() {
     }
   }
 
+  mailbox_search.SearchMailboxController createSearchMailboxController() {
+    final controller = mailbox_search.SearchMailboxController(
+      _MockSearchMailboxInteractor(),
+      renameMailboxInteractor,
+      moveMailboxInteractor,
+      deleteMultipleMailboxInteractor,
+      subscribeMailboxInteractor,
+      subscribeMultipleMailboxInteractor,
+      createNewMailboxInteractor,
+      subaddressingInteractor,
+      moveFolderContentInteractor,
+      TreeBuilder(),
+      VerifyNameInteractor(),
+      getAllMailboxInteractor,
+      refreshAllMailboxInteractor,
+    );
+    controller.onInit();
+    addTearDown(controller.onClose);
+    return controller;
+  }
+
+  void stubRealTreeBuilder() {
+    final realTreeBuilder = TreeBuilder();
+    when(treeBuilder.generateMailboxTreeInUI(
+      allMailboxes: anyNamed('allMailboxes'),
+      currentCollection: anyNamed('currentCollection'),
+      mailboxIdSelected: anyNamed('mailboxIdSelected'),
+      mailboxIdExpanded: anyNamed('mailboxIdExpanded'),
+    )).thenAnswer((invocation) => realTreeBuilder.generateMailboxTreeInUI(
+      allMailboxes:
+          invocation.namedArguments[#allMailboxes] as List<PresentationMailbox>,
+      currentCollection:
+          invocation.namedArguments[#currentCollection] as MailboxCollection,
+      mailboxIdSelected:
+          invocation.namedArguments[#mailboxIdSelected] as MailboxId?,
+      mailboxIdExpanded:
+          invocation.namedArguments[#mailboxIdExpanded] as MailboxId?,
+    ));
+    when(treeBuilder.generateMailboxTreeInUIAfterRefreshChanges(
+      allMailboxes: anyNamed('allMailboxes'),
+      currentCollection: anyNamed('currentCollection'),
+    )).thenAnswer((invocation) =>
+        realTreeBuilder.generateMailboxTreeInUIAfterRefreshChanges(
+      allMailboxes:
+          invocation.namedArguments[#allMailboxes] as List<PresentationMailbox>,
+      currentCollection:
+          invocation.namedArguments[#currentCollection] as MailboxCollection,
+    ));
+  }
+
+  Function captureRegisteredToastAction() => verify(appToast.showToastMessage(
+    any,
+    any,
+    actionName: anyNamed('actionName'),
+    onActionClick: captureAnyNamed('onActionClick'),
+    actionIcon: anyNamed('actionIcon'),
+    leadingIcon: anyNamed('leadingIcon'),
+    leadingSVGIcon: anyNamed('leadingSVGIcon'),
+    leadingSVGIconColor: anyNamed('leadingSVGIconColor'),
+    maxWidth: anyNamed('maxWidth'),
+    infinityToast: anyNamed('infinityToast'),
+    backgroundColor: anyNamed('backgroundColor'),
+    textColor: anyNamed('textColor'),
+    textActionColor: anyNamed('textActionColor'),
+    textStyle: anyNamed('textStyle'),
+    padding: anyNamed('padding'),
+    textAlign: anyNamed('textAlign'),
+    duration: anyNamed('duration'),
+  )).captured.single as Function;
+
   setUp(() {
     Get.put<RemoveEmailDraftsInteractor>(removeEmailDraftsInteractor);
     Get.put<EmailReceiveManager>(emailReceiveManager);
@@ -548,6 +668,8 @@ void main() {
       getStoredEmailSortOrderInteractor,
     );
   });
+
+  tearDown(Get.deleteAll);
 
   group('search/sort/filter feature:', () {
     setUp(() {
@@ -1203,6 +1325,82 @@ void main() {
       );
     });
 
+    test('in-place primary replacement rejects held discovery and its queued mutation', () async {
+      final sharedAccountId = AccountId(Id('candidate-primary-account'));
+      final sharedMailbox = PresentationMailbox(
+        MailboxId(Id('candidate-primary-mailbox')),
+        accountId: sharedAccountId,
+        isSharedAccount: true,
+      );
+      final operationSession = sessionWithSharedAccount(sharedAccountId);
+      final mutationContext = MailboxMutationContext.fromOperation(
+        operationSession,
+        sharedAccountId,
+      );
+      final candidateStarted = Completer<void>();
+      final candidateCompleter = Completer<MailboxCollection>();
+      mailboxDashboardController.sessionCurrent = operationSession;
+      when(treeBuilder.generateMailboxTreeInUI(
+        allMailboxes: anyNamed('allMailboxes'),
+        currentCollection: anyNamed('currentCollection'),
+        mailboxIdSelected: anyNamed('mailboxIdSelected'),
+        mailboxIdExpanded: anyNamed('mailboxIdExpanded'),
+      )).thenAnswer((_) {
+        candidateStarted.complete();
+        return candidateCompleter.future;
+      });
+      when(getAllMailboxInteractor.execute(
+        operationSession,
+        sharedAccountId,
+        properties: anyNamed('properties'),
+      )).thenAnswer((_) => Stream.value(Right(GetAllMailboxSuccess(
+        mailboxList: [sharedMailbox],
+        currentMailboxState: State('candidate-primary'),
+      ))));
+
+      mailboxController.scheduleSharedMailboxLoadForTesting();
+      await candidateStarted.future;
+      mailboxController.handleSuccessViewState(CreateNewMailboxSuccess(
+        Mailbox(id: sharedMailbox.id),
+        mutationContext: mutationContext,
+      ));
+      expect(
+        mailboxController.newFolderIdentityForTesting,
+        MailboxIdentity(sharedAccountId, sharedMailbox.id),
+      );
+
+      operationSession.primaryAccounts[CapabilityIdentifier.jmapMail] =
+          sharedAccountId;
+      candidateCompleter.complete(MailboxCollection(
+        allMailboxes: [sharedMailbox],
+        defaultTree: MailboxTree(MailboxNode.root()),
+        personalTree: MailboxTree(MailboxNode.root()),
+        teamMailboxTree: MailboxTree(
+          MailboxNode.root()..childrenItems = [MailboxNode(sharedMailbox)],
+        ),
+      ));
+      await mailboxController
+          .waitForSharedMailboxMutationReloadQueueForTesting();
+
+      expect(mailboxDashboardController.accountId.value, testAccountId);
+      expect(mailboxController.allMailboxes, isEmpty);
+      expect(mailboxDashboardController.mapMailboxByIdentity, isEmpty);
+      expect(mailboxDashboardController.mapMailboxById, isEmpty);
+      expect(
+        mailboxController.isSharedMailboxAccountLoadedForTesting(
+          sharedAccountId,
+        ),
+        isFalse,
+      );
+      expect(mailboxController.newFolderIdentityForTesting, isNull);
+      expect(mailboxController.lastNavigationRouteForTesting, isNull);
+      verify(getAllMailboxInteractor.execute(
+        operationSession,
+        sharedAccountId,
+        properties: anyNamed('properties'),
+      )).called(1);
+    });
+
     test('obsolete cleanup cannot remove a registered replacement operation', () async {
       final sharedAccountId = AccountId(Id('replacement-operation-account'));
       final mailbox = PresentationMailbox(
@@ -1853,7 +2051,6 @@ void main() {
       expect(searchController.sortOrderFiltered, EmailSortOrderType.subjectAscending);
     });
 
-    tearDown(Get.deleteAll);
   });
 
   group('spamMailboxId:test', () {
@@ -1900,6 +2097,12 @@ void main() {
   });
 
   group('getSubaddress:test', () {
+    tearDown(() {
+      if (!mailboxController.isClosedForTesting) {
+        mailboxController.onClose();
+      }
+    });
+
     setUp(() {
       getEmailsInMailboxInteractor = MockGetEmailsInMailboxInteractor();
 
@@ -1925,6 +2128,10 @@ void main() {
           verifyNameInteractor,
           getAllMailboxInteractor,
           refreshAllMailboxInteractor);
+      expect(
+        mailboxController.mailboxDashBoardController,
+        same(mailboxDashboardController),
+      );
       mailboxController.onReady();
       mailboxController.mailboxDashBoardController.sessionCurrent = testSession;
       mailboxController.mailboxDashBoardController.accountId.value = testAccountId;
@@ -2373,6 +2580,1520 @@ void main() {
       controller.mailboxCreatorCompleter!.complete(NewMailboxArguments(MailboxName('stale')));
       await Future<void>.delayed(Duration.zero);
       verifyNever(createNewMailboxInteractor.execute(any, any, any));
+    });
+
+    test('shared rename completion updates only the originating mailbox identity', () {
+      final sharedAccountId = AccountId(Id('shared-completion'));
+      final duplicateId = MailboxId(Id('completion-collision'));
+      final primaryMailbox = PresentationMailbox(
+        duplicateId,
+        accountId: testAccountId,
+        name: MailboxName('Primary'),
+      );
+      final sharedMailbox = PresentationMailbox(
+        duplicateId,
+        accountId: sharedAccountId,
+        isSharedAccount: true,
+        name: MailboxName('Shared'),
+      );
+      final operationSession = sessionWithSharedAccount(sharedAccountId);
+      mailboxController.mailboxDashBoardController.sessionCurrent = operationSession;
+      mailboxController.personalMailboxTree.value = MailboxTree(
+        MailboxNode.root()..childrenItems = [MailboxNode(primaryMailbox)],
+      );
+      mailboxController.teamMailboxesTree.value = MailboxTree(
+        MailboxNode.root()..childrenItems = [MailboxNode(sharedMailbox)],
+      );
+      final mutationContext = MailboxMutationContext.fromOperation(
+        operationSession,
+        sharedAccountId,
+      );
+
+      mailboxController.handleSuccessViewState(RenameMailboxSuccess(
+        request: RenameMailboxRequest(duplicateId, MailboxName('Renamed shared')),
+        mutationContext: mutationContext,
+      ));
+
+      expect(
+        mailboxController.findMailboxNodeByIdentity(
+          MailboxIdentity(testAccountId, duplicateId),
+        )?.item.name,
+        MailboxName('Primary'),
+      );
+      expect(
+        mailboxController.findMailboxNodeByIdentity(
+          MailboxIdentity(sharedAccountId, duplicateId),
+        )?.item.name,
+        MailboxName('Renamed shared'),
+      );
+    });
+
+    test('shared delete completion removes only the originating account map entry', () {
+      final sharedAccountId = AccountId(Id('shared-delete-completion'));
+      final duplicateId = MailboxId(Id('delete-completion-collision'));
+      final primaryMailbox = PresentationMailbox(duplicateId, accountId: testAccountId);
+      final sharedMailbox = PresentationMailbox(
+        duplicateId,
+        accountId: sharedAccountId,
+        isSharedAccount: true,
+      );
+      final operationSession = sessionWithSharedAccount(sharedAccountId);
+      mailboxController.mailboxDashBoardController
+        ..sessionCurrent = operationSession
+        ..mapMailboxByIdentity = {
+          MailboxIdentity(testAccountId, duplicateId): primaryMailbox,
+          MailboxIdentity(sharedAccountId, duplicateId): sharedMailbox,
+        }
+        ..mapMailboxById = {duplicateId: primaryMailbox};
+
+      mailboxController.handleSuccessViewState(DeleteMultipleMailboxAllSuccess(
+        [duplicateId],
+        mutationContext: MailboxMutationContext.fromOperation(
+          operationSession,
+          sharedAccountId,
+        ),
+      ));
+
+      expect(
+        mailboxController.mailboxDashBoardController.mapMailboxByIdentity,
+        contains(MailboxIdentity(testAccountId, duplicateId)),
+      );
+      expect(
+        mailboxController.mailboxDashBoardController.mapMailboxByIdentity,
+        isNot(contains(MailboxIdentity(sharedAccountId, duplicateId))),
+      );
+      expect(
+        mailboxController.mailboxDashBoardController.mapMailboxById[duplicateId],
+        same(primaryMailbox),
+      );
+    });
+
+    test('stale shared completion after session replacement has no mutation', () {
+      final sharedAccountId = AccountId(Id('stale-shared-completion'));
+      final mailboxId = MailboxId(Id('stale-completion'));
+      final sharedMailbox = PresentationMailbox(
+        mailboxId,
+        accountId: sharedAccountId,
+        isSharedAccount: true,
+        name: MailboxName('Original'),
+      );
+      final operationSession = sessionWithSharedAccount(sharedAccountId);
+      mailboxController.teamMailboxesTree.value = MailboxTree(
+        MailboxNode.root()..childrenItems = [MailboxNode(sharedMailbox)],
+      );
+      mailboxController.mailboxDashBoardController.sessionCurrent = testSession;
+
+      mailboxController.handleSuccessViewState(RenameMailboxSuccess(
+        request: RenameMailboxRequest(mailboxId, MailboxName('Stale rename')),
+        mutationContext: MailboxMutationContext.fromOperation(
+          operationSession,
+          sharedAccountId,
+        ),
+      ));
+
+      expect(
+        mailboxController.findMailboxNodeByIdentity(
+          MailboxIdentity(sharedAccountId, mailboxId),
+        )?.item.name,
+        MailboxName('Original'),
+      );
+    });
+
+    test('move completion with shared context reloads the shared account', () async {
+      final sharedAccountId = AccountId(Id('shared-move-completion'));
+      final operationSession = sessionWithSharedAccount(sharedAccountId);
+      final mutationContext = MailboxMutationContext.fromOperation(
+        operationSession,
+        sharedAccountId,
+      );
+      when(getAllMailboxInteractor.execute(any, any))
+          .thenAnswer((_) => const Stream.empty());
+      mailboxController.mailboxDashBoardController.sessionCurrent = operationSession;
+      clearInteractions(getAllMailboxInteractor);
+
+      mailboxController.handleSuccessViewState(MoveMailboxSuccess(
+        MailboxId(Id('moved-mailbox')),
+        MoveAction.moving,
+        mutationContext: mutationContext,
+      ));
+      await flushMailboxLoad();
+
+      verify(getAllMailboxInteractor.execute(
+        operationSession,
+        sharedAccountId,
+      )).called(1);
+      verifyNever(getAllMailboxInteractor.execute(any, testAccountId));
+    });
+
+    test('unsubscribe completion with shared context reloads the shared account', () async {
+      final sharedAccountId = AccountId(Id('shared-subscribe-completion'));
+      final operationSession = sessionWithSharedAccount(sharedAccountId);
+      final mutationContext = MailboxMutationContext.fromOperation(
+        operationSession,
+        sharedAccountId,
+      );
+      when(getAllMailboxInteractor.execute(any, any))
+          .thenAnswer((_) => const Stream.empty());
+      mailboxController.mailboxDashBoardController.sessionCurrent = operationSession;
+      clearInteractions(getAllMailboxInteractor);
+
+      mailboxController.handleSuccessViewState(SubscribeMailboxSuccess(
+        MailboxId(Id('hidden-mailbox')),
+        MailboxSubscribeAction.unSubscribe,
+        mutationContext: mutationContext,
+      ));
+      await flushMailboxLoad();
+
+      verify(getAllMailboxInteractor.execute(
+        operationSession,
+        sharedAccountId,
+      )).called(1);
+      verifyNever(getAllMailboxInteractor.execute(any, testAccountId));
+    });
+
+    test('subscribe-multiple completion with shared context reloads the shared account', () async {
+      final sharedAccountId = AccountId(Id('shared-subscribe-multiple-completion'));
+      final operationSession = sessionWithSharedAccount(sharedAccountId);
+      final mutationContext = MailboxMutationContext.fromOperation(
+        operationSession,
+        sharedAccountId,
+      );
+      when(getAllMailboxInteractor.execute(any, any))
+          .thenAnswer((_) => const Stream.empty());
+      mailboxController.mailboxDashBoardController.sessionCurrent = operationSession;
+      clearInteractions(getAllMailboxInteractor);
+
+      mailboxController.handleSuccessViewState(SubscribeMultipleMailboxAllSuccess(
+        MailboxId(Id('hidden-parent')),
+        [MailboxId(Id('hidden-child'))],
+        MailboxSubscribeAction.unSubscribe,
+        mutationContext: mutationContext,
+      ));
+      await flushMailboxLoad();
+
+      verify(getAllMailboxInteractor.execute(
+        operationSession,
+        sharedAccountId,
+      )).called(1);
+      verifyNever(getAllMailboxInteractor.execute(any, testAccountId));
+    });
+
+    test('create completion with shared context reloads the shared account', () async {
+      final sharedAccountId = AccountId(Id('shared-create-completion'));
+      final operationSession = sessionWithSharedAccount(sharedAccountId);
+      final mutationContext = MailboxMutationContext.fromOperation(
+        operationSession,
+        sharedAccountId,
+      );
+      when(getAllMailboxInteractor.execute(any, any))
+          .thenAnswer((_) => const Stream.empty());
+      mailboxController.mailboxDashBoardController.sessionCurrent = operationSession;
+      clearInteractions(getAllMailboxInteractor);
+
+      mailboxController.handleSuccessViewState(CreateNewMailboxSuccess(
+        Mailbox(id: MailboxId(Id('new-shared-mailbox'))),
+        mutationContext: mutationContext,
+      ));
+      await flushMailboxLoad();
+
+      verify(getAllMailboxInteractor.execute(
+        operationSession,
+        sharedAccountId,
+      )).called(1);
+      verifyNever(getAllMailboxInteractor.execute(any, testAccountId));
+    });
+
+    test('move completion after session replacement is ignored', () async {
+      final sharedAccountId = AccountId(Id('stale-move-completion'));
+      final operationSession = sessionWithSharedAccount(sharedAccountId);
+      mailboxController.mailboxDashBoardController.sessionCurrent = testSession;
+      clearInteractions(getAllMailboxInteractor);
+
+      mailboxController.handleSuccessViewState(MoveMailboxSuccess(
+        MailboxId(Id('stale-moved-mailbox')),
+        MoveAction.moving,
+        mutationContext: MailboxMutationContext.fromOperation(
+          operationSession,
+          sharedAccountId,
+        ),
+      ));
+      await flushMailboxLoad();
+
+      verifyNever(getAllMailboxInteractor.execute(any, any));
+    });
+
+    test('unsubscribe completion after session replacement is ignored', () async {
+      final sharedAccountId = AccountId(Id('stale-subscribe-completion'));
+      final operationSession = sessionWithSharedAccount(sharedAccountId);
+      mailboxController.mailboxDashBoardController.sessionCurrent = testSession;
+      clearInteractions(getAllMailboxInteractor);
+
+      mailboxController.handleSuccessViewState(SubscribeMailboxSuccess(
+        MailboxId(Id('stale-hidden-mailbox')),
+        MailboxSubscribeAction.unSubscribe,
+        mutationContext: MailboxMutationContext.fromOperation(
+          operationSession,
+          sharedAccountId,
+        ),
+      ));
+      await flushMailboxLoad();
+
+      verifyNever(getAllMailboxInteractor.execute(any, any));
+    });
+
+    test('stale shared create completion silently exits without a toast', () async {
+      final sharedAccountId = AccountId(Id('stale-shared-create-toast'));
+      final operationSession = sessionWithSharedAccount(sharedAccountId);
+      final selectedBeforeCompletion = PresentationMailbox(
+        MailboxId(Id('selected-before-stale-create')),
+        accountId: testAccountId,
+      );
+      mailboxController.mailboxDashBoardController.sessionCurrent = testSession;
+      mailboxController.mailboxDashBoardController.selectedMailbox.value =
+          selectedBeforeCompletion;
+      clearInteractions(appToast);
+      clearInteractions(getAllMailboxInteractor);
+
+      mailboxController.handleSuccessViewState(CreateNewMailboxSuccess(
+        Mailbox(id: MailboxId(Id('new-stale-shared-mailbox'))),
+        mutationContext: MailboxMutationContext.fromOperation(
+          operationSession,
+          sharedAccountId,
+        ),
+      ));
+      await flushMailboxLoad();
+
+      verifyNever(appToast.showToastErrorMessage(any, any));
+      verifyNever(appToast.showToastSuccessMessage(any, any));
+      verifyNever(getAllMailboxInteractor.execute(any, any));
+      expect(
+        mailboxController.mailboxDashBoardController.selectedMailbox.value,
+        same(selectedBeforeCompletion),
+      );
+      expect(mailboxController.newFolderIdentityForTesting, isNull);
+    });
+
+    test('shared create completion scopes the pending identity to the shared account', () async {
+      final sharedAccountId = AccountId(Id('scope-shared-create'));
+      final operationSession = sessionWithSharedAccount(sharedAccountId);
+      final controller = mailboxController as _TestMailboxController;
+      controller.mailboxDashBoardController.sessionCurrent = operationSession;
+      when(getAllMailboxInteractor.execute(any, any))
+          .thenAnswer((_) => const Stream.empty());
+
+      controller.handleSuccessViewState(CreateNewMailboxSuccess(
+        Mailbox(id: MailboxId(Id('created-in-shared'))),
+        mutationContext: MailboxMutationContext.fromOperation(
+          operationSession,
+          sharedAccountId,
+        ),
+      ));
+
+      expect(
+        controller.newFolderIdentityForTesting,
+        MailboxIdentity(sharedAccountId, MailboxId(Id('created-in-shared'))),
+      );
+      await flushMailboxLoad();
+    });
+
+    testWidgets('shared create reload redirects to the shared mailbox when its id collides with primary', (tester) async {
+      stubRealTreeBuilder();
+      final sharedAccountId = AccountId(Id('shared-create-redirect'));
+      final operationSession = sessionWithSharedAccount(sharedAccountId);
+      final duplicateId = MailboxId(Id('created-folder-collision'));
+      final primaryMailbox = PresentationMailbox(
+        duplicateId,
+        accountId: testAccountId,
+        name: MailboxName('Primary collision'),
+      );
+      final sharedMailbox = PresentationMailbox(
+        duplicateId,
+        name: MailboxName('Created shared folder'),
+      );
+      final controller = mailboxController as _TestMailboxController;
+      controller.updateMailboxTree(mailboxCollection: MailboxCollection(
+        allMailboxes: [primaryMailbox],
+        defaultTree: MailboxTree(MailboxNode.root()),
+        personalTree: MailboxTree(
+          MailboxNode.root()..childrenItems = [MailboxNode(primaryMailbox)],
+        ),
+        teamMailboxTree: MailboxTree(MailboxNode.root()),
+      ));
+      when(getAllMailboxInteractor.execute(operationSession, sharedAccountId))
+          .thenAnswer((_) => Stream.value(Right(GetAllMailboxSuccess(
+                mailboxList: [sharedMailbox],
+                currentMailboxState: State('shared-created'),
+              ))));
+      await tester.pumpWidget(GetMaterialApp(
+        localizationsDelegates: const [_TestAppLocalizationsDelegate()],
+        home: Builder(builder: (_) => const SizedBox()),
+      ));
+      await tester.pump();
+      controller.mailboxDashBoardController
+        ..sessionCurrent = operationSession
+        ..selectedMailbox.value = primaryMailbox;
+
+      await tester.runAsync(() async {
+        controller.handleSuccessViewState(CreateNewMailboxSuccess(
+          Mailbox(id: duplicateId, name: MailboxName('Created shared folder')),
+          mutationContext: MailboxMutationContext.fromOperation(
+            operationSession,
+            sharedAccountId,
+          ),
+        ));
+        await flushMailboxLoad();
+      });
+
+      expect(
+        controller.isSharedMailboxAccountLoadedForTesting(sharedAccountId),
+        isTrue,
+      );
+      expect(
+        controller.findMailboxNodeByIdentity(
+          MailboxIdentity(sharedAccountId, duplicateId),
+        ),
+        isNotNull,
+      );
+      final selectedMailbox =
+          controller.mailboxDashBoardController.selectedMailbox.value;
+      expect(selectedMailbox?.id, duplicateId);
+      expect(selectedMailbox?.accountId, sharedAccountId);
+      expect(selectedMailbox?.isSharedAccount, isTrue);
+      expect(selectedMailbox?.name, MailboxName('Created shared folder'));
+      expect(selectedMailbox, isNot(same(primaryMailbox)));
+      expect(controller.newFolderIdentityForTesting, isNull);
+      expect(
+        controller.mailboxDashBoardController.mapMailboxByIdentity,
+        contains(MailboxIdentity(testAccountId, duplicateId)),
+      );
+      expect(
+        controller.mailboxDashBoardController.mapMailboxByIdentity[
+          MailboxIdentity(testAccountId, duplicateId)
+        ]?.accountId,
+        testAccountId,
+      );
+      expect(
+        controller.mailboxDashBoardController.mapMailboxByIdentity,
+        contains(MailboxIdentity(sharedAccountId, duplicateId)),
+      );
+    });
+
+    testWidgets(
+      'shared create waits for in-flight discovery then reloads and redirects by identity',
+      (tester) async {
+        stubRealTreeBuilder();
+        final sharedAccountId = AccountId(Id('queued-shared-create'));
+        final operationSession = sessionWithSharedAccount(sharedAccountId);
+        final duplicateId = MailboxId(Id('queued-created-collision'));
+        final primaryMailbox = PresentationMailbox(
+          duplicateId,
+          accountId: testAccountId,
+          name: MailboxName('Primary collision'),
+        );
+        final createdSharedMailbox = PresentationMailbox(
+          duplicateId,
+          name: MailboxName('Created after discovery'),
+        );
+        final initialLoad = StreamController<Either<Failure, Success>>();
+        addTearDown(() async {
+          if (!initialLoad.isClosed) await initialLoad.close();
+        });
+        var sharedLoadCount = 0;
+        when(getAllMailboxInteractor.execute(
+          operationSession,
+          sharedAccountId,
+        )).thenAnswer((_) {
+          sharedLoadCount++;
+          if (sharedLoadCount == 1) return initialLoad.stream;
+          return Stream.value(Right(GetAllMailboxSuccess(
+            mailboxList: [createdSharedMailbox],
+            currentMailboxState: State('mutation-reload'),
+          )));
+        });
+        final controller = mailboxController as _TestMailboxController;
+        controller.updateMailboxTree(mailboxCollection: MailboxCollection(
+          allMailboxes: [primaryMailbox],
+          defaultTree: MailboxTree(MailboxNode.root()),
+          personalTree: MailboxTree(
+            MailboxNode.root()..childrenItems = [MailboxNode(primaryMailbox)],
+          ),
+          teamMailboxTree: MailboxTree(MailboxNode.root()),
+        ));
+        await tester.pumpWidget(GetMaterialApp(
+          localizationsDelegates: const [_TestAppLocalizationsDelegate()],
+          home: Builder(builder: (_) => const SizedBox()),
+        ));
+        await tester.pump();
+        controller.mailboxDashBoardController
+          ..sessionCurrent = operationSession
+          ..selectedMailbox.value = primaryMailbox;
+
+        await tester.runAsync(() async {
+          controller.scheduleSharedMailboxLoadForTesting();
+          await flushMailboxLoad();
+          expect(sharedLoadCount, 1);
+
+          controller.handleSuccessViewState(CreateNewMailboxSuccess(
+            Mailbox(
+              id: duplicateId,
+              name: MailboxName('Created after discovery'),
+            ),
+            mutationContext: MailboxMutationContext.fromOperation(
+              operationSession,
+              sharedAccountId,
+            ),
+          ));
+          await flushMailboxLoad();
+          expect(sharedLoadCount, 1);
+          expect(
+            controller.newFolderIdentityForTesting,
+            MailboxIdentity(sharedAccountId, duplicateId),
+          );
+
+          initialLoad.add(Right(GetAllMailboxSuccess(
+            mailboxList: const [],
+            currentMailboxState: State('initial-discovery'),
+          )));
+          await initialLoad.close();
+          await flushMailboxLoad();
+        });
+
+        expect(sharedLoadCount, 2);
+        final selectedMailbox =
+            controller.mailboxDashBoardController.selectedMailbox.value;
+        expect(selectedMailbox?.id, duplicateId);
+        expect(selectedMailbox?.accountId, sharedAccountId);
+        expect(selectedMailbox?.isSharedAccount, isTrue);
+        expect(selectedMailbox?.name, MailboxName('Created after discovery'));
+        expect(controller.newFolderIdentityForTesting, isNull);
+      },
+    );
+
+    test('Search shared mutation reaches the real consumer and reloads only its origin', () async {
+      stubRealTreeBuilder();
+      final accountA = AccountId(Id('search-origin-a'));
+      final accountB = AccountId(Id('search-unloaded-b'));
+      final operationSession = sessionWithSharedAccounts({
+        accountA: true,
+        accountB: true,
+      });
+      final accountAInvoked = Completer<void>();
+      when(getAllMailboxInteractor.execute(operationSession, testAccountId))
+          .thenAnswer((_) => const Stream.empty());
+      when(getAllMailboxInteractor.execute(operationSession, accountA))
+          .thenAnswer((_) {
+        if (!accountAInvoked.isCompleted) accountAInvoked.complete();
+        return Stream.value(Right(GetAllMailboxSuccess(
+          mailboxList: const [],
+          currentMailboxState: State('search-origin'),
+        )));
+      });
+      when(getAllMailboxInteractor.execute(operationSession, accountB))
+          .thenAnswer((_) => Stream.value(Right(GetAllMailboxSuccess(
+        mailboxList: const [],
+        currentMailboxState: State('unrelated'),
+      ))));
+      mailboxController.mailboxDashBoardController.sessionCurrent =
+          operationSession;
+      mailboxController.onInit();
+      final searchMailboxController = createSearchMailboxController();
+
+      searchMailboxController.handleSuccessViewState(MoveMailboxSuccess(
+        MailboxId(Id('search-origin-move')),
+        MoveAction.moving,
+        mutationContext: MailboxMutationContext.fromOperation(
+          operationSession,
+          accountA,
+        ),
+      ));
+
+      await accountAInvoked.future;
+      await mailboxController
+          .waitForSharedMailboxMutationReloadQueueForTesting();
+      verify(getAllMailboxInteractor.execute(operationSession, accountA))
+          .called(1);
+      verifyNever(getAllMailboxInteractor.execute(operationSession, accountB));
+    });
+
+    test('Search mutation waits for held discovery and then reloads its origin', () async {
+      stubRealTreeBuilder();
+      final sharedAccountId = AccountId(Id('search-held-discovery'));
+      final operationSession = sessionWithSharedAccount(sharedAccountId);
+      final initialDiscovery = StreamController<Either<Failure, Success>>();
+      addTearDown(() async {
+        if (!initialDiscovery.isClosed) await initialDiscovery.close();
+      });
+      final firstInvocation = Completer<void>();
+      var invocationCount = 0;
+      when(getAllMailboxInteractor.execute(operationSession, testAccountId))
+          .thenAnswer((_) => const Stream.empty());
+      when(getAllMailboxInteractor.execute(
+        operationSession,
+        sharedAccountId,
+      )).thenAnswer((_) {
+        invocationCount++;
+        if (invocationCount == 1) {
+          firstInvocation.complete();
+          return initialDiscovery.stream;
+        }
+        return Stream.value(Right(GetAllMailboxSuccess(
+          mailboxList: const [],
+          currentMailboxState: State('search-origin-reload'),
+        )));
+      });
+      mailboxController.mailboxDashBoardController.sessionCurrent =
+          operationSession;
+      mailboxController.onInit();
+      final searchMailboxController = createSearchMailboxController();
+
+      mailboxController.scheduleSharedMailboxLoadForTesting();
+      await firstInvocation.future;
+      searchMailboxController.handleSuccessViewState(MoveMailboxSuccess(
+        MailboxId(Id('search-held-move')),
+        MoveAction.moving,
+        mutationContext: MailboxMutationContext.fromOperation(
+          operationSession,
+          sharedAccountId,
+        ),
+      ));
+
+      initialDiscovery.add(Right(GetAllMailboxSuccess(
+        mailboxList: const [],
+        currentMailboxState: State('held-discovery'),
+      )));
+      await initialDiscovery.close();
+      await mailboxController
+          .waitForSharedMailboxMutationReloadQueueForTesting();
+      expect(invocationCount, 2);
+    });
+
+    test('two rapid Search mutations both reach the real queue consumer', () async {
+      stubRealTreeBuilder();
+      final sharedAccountId = AccountId(Id('search-rapid-origin'));
+      final operationSession = sessionWithSharedAccount(sharedAccountId);
+      final firstReload = StreamController<Either<Failure, Success>>();
+      addTearDown(() async {
+        if (!firstReload.isClosed) await firstReload.close();
+      });
+      final firstInvocation = Completer<void>();
+      var invocationCount = 0;
+      when(getAllMailboxInteractor.execute(operationSession, testAccountId))
+          .thenAnswer((_) => const Stream.empty());
+      when(getAllMailboxInteractor.execute(
+        operationSession,
+        sharedAccountId,
+      )).thenAnswer((_) {
+        invocationCount++;
+        if (invocationCount == 1) {
+          firstInvocation.complete();
+          return firstReload.stream;
+        }
+        return Stream.value(Right(GetAllMailboxSuccess(
+          mailboxList: const [],
+          currentMailboxState: State('rapid-second'),
+        )));
+      });
+      mailboxController.mailboxDashBoardController.sessionCurrent =
+          operationSession;
+      mailboxController.onInit();
+      final searchMailboxController = createSearchMailboxController();
+      final mutationContext = MailboxMutationContext.fromOperation(
+        operationSession,
+        sharedAccountId,
+      );
+
+      searchMailboxController.handleSuccessViewState(MoveMailboxSuccess(
+        MailboxId(Id('rapid-first')),
+        MoveAction.moving,
+        mutationContext: mutationContext,
+      ));
+      await firstInvocation.future;
+      searchMailboxController.handleSuccessViewState(MoveMailboxSuccess(
+        MailboxId(Id('rapid-second')),
+        MoveAction.moving,
+        mutationContext: mutationContext,
+      ));
+
+      firstReload.add(Right(GetAllMailboxSuccess(
+        mailboxList: const [],
+        currentMailboxState: State('rapid-first'),
+      )));
+      await firstReload.close();
+      await mailboxController
+          .waitForSharedMailboxMutationReloadQueueForTesting();
+      expect(invocationCount, 2);
+    });
+
+    testWidgets('Search shared create redirects by account identity through the real consumer', (tester) async {
+      stubRealTreeBuilder();
+      final sharedAccountId = AccountId(Id('search-create-origin'));
+      final operationSession = sessionWithSharedAccount(sharedAccountId);
+      final duplicateId = MailboxId(Id('search-created-collision'));
+      final primaryMailbox = PresentationMailbox(
+        duplicateId,
+        accountId: testAccountId,
+        name: MailboxName('Primary collision'),
+      );
+      final sharedMailbox = PresentationMailbox(
+        duplicateId,
+        name: MailboxName('Search-created shared folder'),
+      );
+      when(getAllMailboxInteractor.execute(operationSession, testAccountId))
+          .thenAnswer((_) => const Stream.empty());
+      when(getAllMailboxInteractor.execute(
+        operationSession,
+        sharedAccountId,
+      )).thenAnswer((_) => Stream.value(Right(GetAllMailboxSuccess(
+        mailboxList: [sharedMailbox],
+        currentMailboxState: State('search-created'),
+      ))));
+      mailboxController.updateMailboxTree(mailboxCollection: MailboxCollection(
+        allMailboxes: [primaryMailbox],
+        defaultTree: MailboxTree(MailboxNode.root()),
+        personalTree: MailboxTree(
+          MailboxNode.root()..childrenItems = [MailboxNode(primaryMailbox)],
+        ),
+        teamMailboxTree: MailboxTree(MailboxNode.root()),
+      ));
+      mailboxController.mailboxDashBoardController
+        ..sessionCurrent = operationSession
+        ..selectedMailbox.value = primaryMailbox;
+      mailboxController.onInit();
+      final searchMailboxController = createSearchMailboxController();
+      await tester.pumpWidget(GetMaterialApp(
+        localizationsDelegates: const [_TestAppLocalizationsDelegate()],
+        home: Builder(builder: (_) => const SizedBox()),
+      ));
+      await tester.pump();
+
+      await tester.runAsync(() async {
+        searchMailboxController.handleSuccessViewState(CreateNewMailboxSuccess(
+          Mailbox(id: duplicateId, name: MailboxName('Search-created shared folder')),
+          mutationContext: MailboxMutationContext.fromOperation(
+            operationSession,
+            sharedAccountId,
+          ),
+        ));
+        await mailboxController
+            .waitForSharedMailboxMutationReloadQueueForTesting();
+      });
+
+      final selectedMailbox =
+          mailboxController.mailboxDashBoardController.selectedMailbox.value;
+      expect(selectedMailbox?.id, duplicateId);
+      expect(selectedMailbox?.accountId, sharedAccountId);
+      expect(selectedMailbox?.isSharedAccount, isTrue);
+      expect(mailboxController.newFolderIdentityForTesting, isNull);
+    });
+
+    test('session replacement clears a held shared-create redirect', () async {
+      final sharedAccountId = AccountId(Id('redirect-session-replacement'));
+      final operationSession = sessionWithSharedAccount(sharedAccountId);
+      final heldReload = StreamController<Either<Failure, Success>>();
+      addTearDown(() async {
+        if (!heldReload.isClosed) await heldReload.close();
+      });
+      final reloadInvoked = Completer<void>();
+      when(getAllMailboxInteractor.execute(
+        operationSession,
+        sharedAccountId,
+      )).thenAnswer((_) {
+        reloadInvoked.complete();
+        return heldReload.stream;
+      });
+      mailboxController.mailboxDashBoardController.sessionCurrent =
+          operationSession;
+
+      mailboxController.handleSuccessViewState(CreateNewMailboxSuccess(
+        Mailbox(id: MailboxId(Id('stale-session-folder'))),
+        mutationContext: MailboxMutationContext.fromOperation(
+          operationSession,
+          sharedAccountId,
+        ),
+      ));
+      await reloadInvoked.future;
+      mailboxController.mailboxDashBoardController.sessionCurrent =
+          sessionWithSharedAccount(sharedAccountId);
+      await heldReload.close();
+      await mailboxController
+          .waitForSharedMailboxMutationReloadQueueForTesting();
+
+      expect(mailboxController.newFolderIdentityForTesting, isNull);
+    });
+
+    test('same-Session primary replacement clears a held shared-create redirect', () async {
+      final sharedAccountId = AccountId(Id('redirect-primary-replacement'));
+      final operationSession = sessionWithSharedAccount(sharedAccountId);
+      final heldReload = StreamController<Either<Failure, Success>>();
+      addTearDown(() async {
+        if (!heldReload.isClosed) await heldReload.close();
+      });
+      final reloadInvoked = Completer<void>();
+      when(getAllMailboxInteractor.execute(
+        operationSession,
+        sharedAccountId,
+      )).thenAnswer((_) {
+        reloadInvoked.complete();
+        return heldReload.stream;
+      });
+      mailboxController.mailboxDashBoardController.sessionCurrent =
+          operationSession;
+
+      mailboxController.handleSuccessViewState(CreateNewMailboxSuccess(
+        Mailbox(id: MailboxId(Id('stale-primary-folder'))),
+        mutationContext: MailboxMutationContext.fromOperation(
+          operationSession,
+          sharedAccountId,
+        ),
+      ));
+      await reloadInvoked.future;
+      operationSession.primaryAccounts[CapabilityIdentifier.jmapMail] =
+          sharedAccountId;
+      await heldReload.close();
+      await mailboxController
+          .waitForSharedMailboxMutationReloadQueueForTesting();
+
+      expect(mailboxController.newFolderIdentityForTesting, isNull);
+    });
+
+    test('origin removal clears a held shared-create redirect', () async {
+      final sharedAccountId = AccountId(Id('redirect-origin-removal'));
+      final operationSession = sessionWithSharedAccount(sharedAccountId);
+      final heldReload = StreamController<Either<Failure, Success>>();
+      addTearDown(() async {
+        if (!heldReload.isClosed) await heldReload.close();
+      });
+      final reloadInvoked = Completer<void>();
+      when(getAllMailboxInteractor.execute(
+        operationSession,
+        sharedAccountId,
+      )).thenAnswer((_) {
+        reloadInvoked.complete();
+        return heldReload.stream;
+      });
+      mailboxController.mailboxDashBoardController.sessionCurrent =
+          operationSession;
+
+      mailboxController.handleSuccessViewState(CreateNewMailboxSuccess(
+        Mailbox(id: MailboxId(Id('removed-origin-folder'))),
+        mutationContext: MailboxMutationContext.fromOperation(
+          operationSession,
+          sharedAccountId,
+        ),
+      ));
+      await reloadInvoked.future;
+      operationSession.accounts.remove(sharedAccountId);
+      await heldReload.close();
+      await mailboxController
+          .waitForSharedMailboxMutationReloadQueueForTesting();
+
+      expect(mailboxController.newFolderIdentityForTesting, isNull);
+    });
+
+    test('controller teardown immediately clears a held shared-create redirect', () async {
+      final sharedAccountId = AccountId(Id('redirect-controller-close'));
+      final operationSession = sessionWithSharedAccount(sharedAccountId);
+      final heldReload = StreamController<Either<Failure, Success>>();
+      addTearDown(() async {
+        if (!heldReload.isClosed) await heldReload.close();
+      });
+      final reloadInvoked = Completer<void>();
+      when(getAllMailboxInteractor.execute(
+        operationSession,
+        sharedAccountId,
+      )).thenAnswer((_) {
+        reloadInvoked.complete();
+        return heldReload.stream;
+      });
+      mailboxController.mailboxDashBoardController.sessionCurrent =
+          operationSession;
+
+      mailboxController.handleSuccessViewState(CreateNewMailboxSuccess(
+        Mailbox(id: MailboxId(Id('closed-controller-folder'))),
+        mutationContext: MailboxMutationContext.fromOperation(
+          operationSession,
+          sharedAccountId,
+        ),
+      ));
+      await reloadInvoked.future;
+      mailboxController.onClose();
+
+      expect(mailboxController.newFolderIdentityForTesting, isNull);
+      await heldReload.close();
+      await mailboxController
+          .waitForSharedMailboxMutationReloadQueueForTesting();
+    });
+
+    test('loader failure clears the matching shared-create redirect', () async {
+      final sharedAccountId = AccountId(Id('redirect-loader-failure'));
+      final operationSession = sessionWithSharedAccount(sharedAccountId);
+      when(getAllMailboxInteractor.execute(
+        operationSession,
+        sharedAccountId,
+      )).thenAnswer((_) => Stream.value(Left(GetAllMailboxFailure(
+        StateError('injected loader failure'),
+      ))));
+      mailboxController.mailboxDashBoardController.sessionCurrent =
+          operationSession;
+
+      mailboxController.handleSuccessViewState(CreateNewMailboxSuccess(
+        Mailbox(id: MailboxId(Id('failed-load-folder'))),
+        mutationContext: MailboxMutationContext.fromOperation(
+          operationSession,
+          sharedAccountId,
+        ),
+      ));
+      await mailboxController
+          .waitForSharedMailboxMutationReloadQueueForTesting();
+
+      expect(mailboxController.newFolderIdentityForTesting, isNull);
+      expect(
+        mailboxController.isSharedMailboxAccountLoadedForTesting(
+          sharedAccountId,
+        ),
+        isFalse,
+      );
+    });
+
+    testWidgets('create A reload cannot consume create B redirect generation', (tester) async {
+      stubRealTreeBuilder();
+      final sharedAccountId = AccountId(Id('redirect-create-generations'));
+      final operationSession = sessionWithSharedAccount(sharedAccountId);
+      final mailboxAId = MailboxId(Id('created-a'));
+      final mailboxBId = MailboxId(Id('created-b'));
+      final firstReload = StreamController<Either<Failure, Success>>();
+      addTearDown(() async {
+        if (!firstReload.isClosed) await firstReload.close();
+      });
+      final firstInvoked = Completer<void>();
+      var invocationCount = 0;
+      when(getAllMailboxInteractor.execute(
+        operationSession,
+        sharedAccountId,
+      )).thenAnswer((_) {
+        invocationCount++;
+        if (invocationCount == 1) {
+          firstInvoked.complete();
+          return firstReload.stream;
+        }
+        return Stream.value(Right(GetAllMailboxSuccess(
+          mailboxList: [
+            PresentationMailbox(mailboxAId, name: MailboxName('A')),
+            PresentationMailbox(mailboxBId, name: MailboxName('B')),
+          ],
+          currentMailboxState: State('created-b-reload'),
+        )));
+      });
+      mailboxController.mailboxDashBoardController.sessionCurrent =
+          operationSession;
+      await tester.pumpWidget(GetMaterialApp(
+        localizationsDelegates: const [_TestAppLocalizationsDelegate()],
+        home: Builder(builder: (_) => const SizedBox()),
+      ));
+      await tester.pump();
+
+      await tester.runAsync(() async {
+        mailboxController.handleSuccessViewState(CreateNewMailboxSuccess(
+          Mailbox(id: mailboxAId, name: MailboxName('A')),
+          mutationContext: MailboxMutationContext.fromOperation(
+            operationSession,
+            sharedAccountId,
+          ),
+        ));
+        await firstInvoked.future;
+        mailboxController.handleSuccessViewState(CreateNewMailboxSuccess(
+          Mailbox(id: mailboxBId, name: MailboxName('B')),
+          mutationContext: MailboxMutationContext.fromOperation(
+            operationSession,
+            sharedAccountId,
+          ),
+        ));
+        expect(
+          mailboxController.newFolderIdentityForTesting,
+          MailboxIdentity(sharedAccountId, mailboxBId),
+        );
+
+        firstReload.add(Right(GetAllMailboxSuccess(
+          mailboxList: [PresentationMailbox(mailboxAId, name: MailboxName('A'))],
+          currentMailboxState: State('created-a-reload'),
+        )));
+        await firstReload.close();
+        await mailboxController
+            .waitForSharedMailboxMutationReloadQueueForTesting();
+      });
+
+      expect(invocationCount, 2);
+      expect(
+        mailboxController.mailboxDashBoardController.selectedMailbox.value?.id,
+        mailboxBId,
+      );
+      expect(mailboxController.newFolderIdentityForTesting, isNull);
+    });
+
+    test('post-fetch exception releases the queue and preserves a later request', () async {
+      stubRealTreeBuilder();
+      final sharedAccountId = AccountId(Id('queue-exception-recovery'));
+      final operationSession = sessionWithSharedAccount(sharedAccountId);
+      final firstReload = StreamController<Either<Failure, Success>>();
+      addTearDown(() async {
+        if (!firstReload.isClosed) await firstReload.close();
+      });
+      final firstInvoked = Completer<void>();
+      var invocationCount = 0;
+      when(getAllMailboxInteractor.execute(
+        operationSession,
+        sharedAccountId,
+      )).thenAnswer((_) {
+        invocationCount++;
+        if (invocationCount == 1) {
+          firstInvoked.complete();
+          return firstReload.stream;
+        }
+        return Stream.value(Right(GetAllMailboxSuccess(
+          mailboxList: const [],
+          currentMailboxState: State('recovered'),
+        )));
+      });
+      mailboxController.mailboxDashBoardController.sessionCurrent =
+          operationSession;
+      final controller = mailboxController as _TestMailboxController;
+      controller.failNextSharedMailboxCommit = true;
+      final mutationContext = MailboxMutationContext.fromOperation(
+        operationSession,
+        sharedAccountId,
+      );
+
+      controller.handleSuccessViewState(MoveMailboxSuccess(
+        MailboxId(Id('failing-request')),
+        MoveAction.moving,
+        mutationContext: mutationContext,
+      ));
+      await firstInvoked.future;
+      controller.handleSuccessViewState(MoveMailboxSuccess(
+        MailboxId(Id('queued-after-failure')),
+        MoveAction.moving,
+        mutationContext: mutationContext,
+      ));
+
+      firstReload.add(Right(GetAllMailboxSuccess(
+        mailboxList: const [],
+        currentMailboxState: State('failing-commit'),
+      )));
+      await firstReload.close();
+      await controller.waitForSharedMailboxMutationReloadQueueForTesting();
+
+      expect(invocationCount, 2);
+      expect(
+        controller.isSharedMailboxAccountLoadedForTesting(sharedAccountId),
+        isTrue,
+      );
+    });
+
+    test('shared mutation reload targets only its originating unloaded account', () async {
+      stubRealTreeBuilder();
+      final originatingAccountId = AccountId(Id('origin-only-a'));
+      final unrelatedAccountId = AccountId(Id('origin-only-b'));
+      final operationSession = sessionWithSharedAccounts({
+        originatingAccountId: true,
+        unrelatedAccountId: true,
+      });
+      when(getAllMailboxInteractor.execute(
+        operationSession,
+        originatingAccountId,
+      )).thenAnswer((_) => Stream.value(Right(GetAllMailboxSuccess(
+        mailboxList: const [],
+        currentMailboxState: State('origin-only'),
+      ))));
+      when(getAllMailboxInteractor.execute(
+        operationSession,
+        unrelatedAccountId,
+      )).thenAnswer((_) => const Stream.empty());
+      mailboxController.mailboxDashBoardController.sessionCurrent =
+          operationSession;
+      clearInteractions(getAllMailboxInteractor);
+
+      mailboxController.handleSuccessViewState(MoveMailboxSuccess(
+        MailboxId(Id('origin-only-mailbox')),
+        MoveAction.moving,
+        mutationContext: MailboxMutationContext.fromOperation(
+          operationSession,
+          originatingAccountId,
+        ),
+      ));
+      await flushMailboxLoad();
+
+      verify(getAllMailboxInteractor.execute(
+        operationSession,
+        originatingAccountId,
+      )).called(1);
+      verifyNever(getAllMailboxInteractor.execute(
+        operationSession,
+        unrelatedAccountId,
+      ));
+    });
+
+    test('create completion with a null mailbox id clears the pending new folder identity', () async {
+      final operationSession = sessionWithSharedAccounts({});
+      final controller = mailboxController as _TestMailboxController;
+      controller.mailboxDashBoardController.sessionCurrent = operationSession;
+      when(getAllMailboxInteractor.execute(any, any))
+          .thenAnswer((_) => const Stream.empty());
+
+      controller.handleSuccessViewState(CreateNewMailboxSuccess(
+        Mailbox(id: MailboxId(Id('first-folder'))),
+        mutationContext: MailboxMutationContext.fromOperation(
+          operationSession,
+          testAccountId,
+        ),
+      ));
+      expect(
+        controller.newFolderIdentityForTesting,
+        MailboxIdentity(testAccountId, MailboxId(Id('first-folder'))),
+      );
+
+      controller.handleSuccessViewState(CreateNewMailboxSuccess(
+        Mailbox(id: null),
+        mutationContext: MailboxMutationContext.fromOperation(
+          operationSession,
+          testAccountId,
+        ),
+      ));
+
+      expect(controller.newFolderIdentityForTesting, isNull);
+      await flushMailboxLoad();
+    });
+
+    test('primary refresh does not redirect a folder created in a shared account', () async {
+      stubRealTreeBuilder();
+      final sharedAccountId = AccountId(Id('redirect-shared-create'));
+      final operationSession = sessionWithSharedAccount(sharedAccountId);
+      final primaryOnlySession = sessionWithSharedAccounts({});
+      final controller = mailboxController as _TestMailboxController;
+
+      when(getAllMailboxInteractor.execute(any, any))
+          .thenAnswer((_) => const Stream.empty());
+      when(refreshAllMailboxInteractor.execute(
+        any,
+        any,
+        any,
+        properties: anyNamed('properties'),
+      )).thenAnswer((_) => Stream.fromIterable([
+        Right(RefreshChangesAllMailboxSuccess(
+          mailboxList: [
+            PresentationMailbox(
+              MailboxId(Id('primary-inbox')),
+              accountId: testAccountId,
+              role: PresentationMailbox.roleInbox,
+              name: MailboxName('Inbox'),
+            ),
+          ],
+          currentMailboxState: State('refreshed'),
+        )),
+      ]));
+
+      controller.mailboxDashBoardController.sessionCurrent = operationSession;
+      controller.handleSuccessViewState(CreateNewMailboxSuccess(
+        Mailbox(id: MailboxId(Id('created-in-shared'))),
+        mutationContext: MailboxMutationContext.fromOperation(
+          operationSession,
+          sharedAccountId,
+        ),
+      ));
+      expect(
+        controller.newFolderIdentityForTesting,
+        MailboxIdentity(sharedAccountId, MailboxId(Id('created-in-shared'))),
+      );
+
+      // Detach from the shared session before the scheduled shared reload can
+      // complete. The stale mutation request must clear its redirect state.
+      controller.mailboxDashBoardController.sessionCurrent = primaryOnlySession;
+      controller.currentMailboxState = State('stale');
+      controller.onInit();
+
+      mailboxDashboardController.mailboxUIAction.value =
+          RefreshChangeMailboxAction(
+            newState: State('refreshed'),
+            accountId: testAccountId,
+          );
+      await untilCalled(refreshAllMailboxInteractor.execute(
+        any,
+        any,
+        any,
+        properties: anyNamed('properties'),
+      ));
+      await flushMailboxLoad();
+
+      expect(controller.newFolderIdentityForTesting, isNull);
+    });
+
+    test('personal move completion refreshes the primary account', () async {
+      final operationSession = sessionWithSharedAccounts({});
+      mailboxController.mailboxDashBoardController.sessionCurrent = operationSession;
+      when(getAllMailboxInteractor.execute(any, any))
+          .thenAnswer((_) => const Stream.empty());
+      clearInteractions(getAllMailboxInteractor);
+
+      mailboxController.handleSuccessViewState(MoveMailboxSuccess(
+        MailboxId(Id('personal-moved')),
+        MoveAction.moving,
+        mutationContext: MailboxMutationContext.fromOperation(
+          operationSession,
+          testAccountId,
+        ),
+      ));
+      await flushMailboxLoad();
+
+      verify(getAllMailboxInteractor.execute(operationSession, testAccountId)).called(1);
+    });
+
+    test('completion from an in-place replaced primary account is ignored', () async {
+      final sharedAccountId = AccountId(Id('switch-primary'));
+      final operationSession = sessionWithSharedAccount(sharedAccountId);
+      final mutationContext = MailboxMutationContext.fromOperation(
+        operationSession,
+        testAccountId,
+      );
+      operationSession.primaryAccounts[CapabilityIdentifier.jmapMail] =
+          sharedAccountId;
+      mailboxController.mailboxDashBoardController.sessionCurrent =
+          operationSession;
+      when(getAllMailboxInteractor.execute(any, any))
+          .thenAnswer((_) => const Stream.empty());
+      clearInteractions(getAllMailboxInteractor);
+      clearInteractions(refreshAllMailboxInteractor);
+
+      mailboxController.handleSuccessViewState(MoveMailboxSuccess(
+        MailboxId(Id('stale-primary-move')),
+        MoveAction.moving,
+        mutationContext: mutationContext,
+      ));
+      await flushMailboxLoad();
+
+      verifyNever(getAllMailboxInteractor.execute(any, any));
+      verifyNever(refreshAllMailboxInteractor.execute(
+        any,
+        any,
+        any,
+        properties: anyNamed('properties'),
+      ));
+      expect(mailboxController.mailboxDashBoardController.accountId.value, testAccountId);
+    });
+
+    testWidgets(
+      'handled failures ignore in-place JMAP primary replacement',
+      (tester) async {
+        final sharedAccountId = AccountId(Id('failure-primary-replacement'));
+        final operationSession = sessionWithSharedAccount(sharedAccountId);
+        final mutationContext = MailboxMutationContext.fromOperation(
+          operationSession,
+          sharedAccountId,
+        );
+        operationSession.primaryAccounts[CapabilityIdentifier.jmapMail] =
+            sharedAccountId;
+        mailboxController.mailboxDashBoardController.sessionCurrent =
+            operationSession;
+        await tester.pumpWidget(GetMaterialApp(
+          localizationsDelegates: const [_TestAppLocalizationsDelegate()],
+          home: Builder(builder: (_) => const SizedBox()),
+        ));
+        await tester.pumpAndSettle();
+        clearInteractions(appToast);
+
+        mailboxController.handleFailureViewState(CreateNewMailboxFailure(
+          Exception('stale create'),
+          mutationContext: mutationContext,
+        ));
+        mailboxController.handleFailureViewState(RenameMailboxFailure(
+          Exception('stale rename'),
+          mutationContext: mutationContext,
+        ));
+        mailboxController.handleFailureViewState(DeleteMultipleMailboxFailure(
+          Exception('stale delete'),
+          mutationContext: mutationContext,
+        ));
+
+        verifyNever(appToast.showToastErrorMessage(any, any));
+        verifyNever(appToast.showToastSuccessMessage(any, any));
+        expect(
+          mailboxController.mailboxDashBoardController.accountId.value,
+          testAccountId,
+        );
+      },
+    );
+
+    testWidgets('move undo uses the originating shared account after account switch', (tester) async {
+      final sharedAccountId = AccountId(Id('move-undo-shared'));
+      final operationSession = sessionWithSharedAccount(sharedAccountId);
+      when(moveMailboxInteractor.execute(any, any, any))
+          .thenAnswer((_) => const Stream.empty());
+      when(getAllMailboxInteractor.execute(any, any))
+          .thenAnswer((_) => const Stream.empty());
+      mailboxController.mailboxDashBoardController.sessionCurrent = operationSession;
+      await tester.pumpWidget(GetMaterialApp(
+        localizationsDelegates: const [_TestAppLocalizationsDelegate()],
+        home: Builder(builder: (_) => const SizedBox()),
+      ));
+      await tester.pumpAndSettle();
+      clearInteractions(appToast);
+
+      mailboxController.handleSuccessViewState(MoveMailboxSuccess(
+        MailboxId(Id('moved-shared')),
+        MoveAction.moving,
+        parentId: MailboxId(Id('original-parent')),
+        destinationMailboxId: MailboxId(Id('new-parent')),
+        mutationContext: MailboxMutationContext.fromOperation(
+          operationSession,
+          sharedAccountId,
+        ),
+      ));
+      await tester.pumpAndSettle();
+      final undoCallback = captureRegisteredToastAction();
+
+      mailboxController.mailboxDashBoardController.selectedMailbox.value =
+          PresentationMailbox(
+            MailboxId(Id('other-mailbox')),
+            accountId: AccountId(Id('other-account')),
+          );
+      clearInteractions(moveMailboxInteractor);
+      undoCallback();
+      await tester.pumpAndSettle();
+
+      final undoRequest = verify(moveMailboxInteractor.execute(
+        operationSession,
+        sharedAccountId,
+        captureAny,
+      )).captured.single as MoveMailboxRequest;
+      expect(undoRequest.mailboxId, MailboxId(Id('moved-shared')));
+      expect(undoRequest.moveAction, MoveAction.undo);
+      expect(undoRequest.destinationMailboxId, MailboxId(Id('original-parent')));
+      expect(undoRequest.parentId, MailboxId(Id('new-parent')));
+    });
+
+    testWidgets('session replacement rejects registered move undo', (tester) async {
+      final sharedAccountId = AccountId(Id('move-undo-stale-session'));
+      final operationSession = sessionWithSharedAccount(sharedAccountId);
+      when(getAllMailboxInteractor.execute(any, any))
+          .thenAnswer((_) => const Stream.empty());
+      mailboxController.mailboxDashBoardController.sessionCurrent = operationSession;
+      await tester.pumpWidget(GetMaterialApp(
+        localizationsDelegates: const [_TestAppLocalizationsDelegate()],
+        home: Builder(builder: (_) => const SizedBox()),
+      ));
+      await tester.pumpAndSettle();
+      clearInteractions(appToast);
+
+      mailboxController.handleSuccessViewState(MoveMailboxSuccess(
+        MailboxId(Id('moved-before-session-replacement')),
+        MoveAction.moving,
+        mutationContext: MailboxMutationContext.fromOperation(
+          operationSession,
+          sharedAccountId,
+        ),
+      ));
+      await tester.pumpAndSettle();
+      final undoCallback = captureRegisteredToastAction();
+
+      mailboxController.mailboxDashBoardController.sessionCurrent =
+          sessionWithSharedAccounts({});
+      clearInteractions(moveMailboxInteractor);
+      undoCallback();
+      await tester.pumpAndSettle();
+
+      verifyNever(moveMailboxInteractor.execute(any, any, any));
+    });
+
+    testWidgets('originating account removal rejects registered move undo', (tester) async {
+      final sharedAccountId = AccountId(Id('move-undo-removed-account'));
+      final operationSession = sessionWithSharedAccount(sharedAccountId);
+      when(getAllMailboxInteractor.execute(any, any))
+          .thenAnswer((_) => const Stream.empty());
+      mailboxController.mailboxDashBoardController.sessionCurrent = operationSession;
+      await tester.pumpWidget(GetMaterialApp(
+        localizationsDelegates: const [_TestAppLocalizationsDelegate()],
+        home: Builder(builder: (_) => const SizedBox()),
+      ));
+      await tester.pumpAndSettle();
+      clearInteractions(appToast);
+
+      mailboxController.handleSuccessViewState(MoveMailboxSuccess(
+        MailboxId(Id('moved-before-account-removal')),
+        MoveAction.moving,
+        mutationContext: MailboxMutationContext.fromOperation(
+          operationSession,
+          sharedAccountId,
+        ),
+      ));
+      await tester.pumpAndSettle();
+      final undoCallback = captureRegisteredToastAction();
+
+      operationSession.accounts.remove(sharedAccountId);
+      clearInteractions(moveMailboxInteractor);
+      undoCallback();
+      await tester.pumpAndSettle();
+
+      verifyNever(moveMailboxInteractor.execute(any, any, any));
+    });
+
+    test('completion for a shared account removed from the session is ignored', () async {
+      final sharedAccountId = AccountId(Id('removed-shared'));
+      final operationSession = sessionWithSharedAccount(sharedAccountId);
+      operationSession.accounts.remove(sharedAccountId);
+      mailboxController.mailboxDashBoardController.sessionCurrent = operationSession;
+      when(getAllMailboxInteractor.execute(any, any))
+          .thenAnswer((_) => const Stream.empty());
+      clearInteractions(getAllMailboxInteractor);
+
+      mailboxController.handleSuccessViewState(MoveMailboxSuccess(
+        MailboxId(Id('removed-shared-move')),
+        MoveAction.moving,
+        mutationContext: MailboxMutationContext.fromOperation(
+          operationSession,
+          sharedAccountId,
+        ),
+      ));
+      await flushMailboxLoad();
+
+      verifyNever(getAllMailboxInteractor.execute(any, any));
+    });
+
+    testWidgets('stale create failure after session replacement shows no toast', (tester) async {
+      final sharedAccountId = AccountId(Id('stale-failure'));
+      final operationSession = sessionWithSharedAccount(sharedAccountId);
+      await tester.pumpWidget(GetMaterialApp(
+        localizationsDelegates: const [_TestAppLocalizationsDelegate()],
+        home: Builder(builder: (_) => const SizedBox()),
+      ));
+      await tester.pumpAndSettle();
+      clearInteractions(appToast);
+
+      mailboxController.mailboxDashBoardController.sessionCurrent = testSession;
+      mailboxController.handleFailureViewState(CreateNewMailboxFailure(
+        Exception('failed'),
+        mutationContext: MailboxMutationContext.fromOperation(
+          operationSession,
+          sharedAccountId,
+        ),
+      ));
+      await tester.pumpAndSettle();
+
+      verifyNever(appToast.showToastErrorMessage(any, any));
+      verifyNever(appToast.showToastSuccessMessage(any, any));
+    });
+
+    testWidgets('subscribe undo executes against the originating shared account after account switch', (tester) async {
+      final sharedAccountId = AccountId(Id('undo-shared'));
+      final operationSession = sessionWithSharedAccount(sharedAccountId);
+      when(subscribeMailboxInteractor.execute(any, any, any))
+          .thenAnswer((_) => const Stream.empty());
+      when(getAllMailboxInteractor.execute(any, any))
+          .thenAnswer((_) => const Stream.empty());
+      mailboxController.mailboxDashBoardController.sessionCurrent = operationSession;
+      await tester.pumpWidget(GetMaterialApp(
+        localizationsDelegates: const [_TestAppLocalizationsDelegate()],
+        home: Builder(builder: (_) => const SizedBox()),
+      ));
+      await tester.pumpAndSettle();
+
+      mailboxController.handleSuccessViewState(SubscribeMailboxSuccess(
+        MailboxId(Id('hidden-undo')),
+        MailboxSubscribeAction.unSubscribe,
+        mutationContext: MailboxMutationContext.fromOperation(
+          operationSession,
+          sharedAccountId,
+        ),
+        currentMailboxState: State('state'),
+      ));
+      await tester.pumpAndSettle();
+
+      final onActionClick = verify(appToast.showToastMessage(
+        any,
+        any,
+        actionName: anyNamed('actionName'),
+        onActionClick: captureAnyNamed('onActionClick'),
+        actionIcon: anyNamed('actionIcon'),
+        leadingIcon: anyNamed('leadingIcon'),
+        leadingSVGIcon: anyNamed('leadingSVGIcon'),
+        leadingSVGIconColor: anyNamed('leadingSVGIconColor'),
+        maxWidth: anyNamed('maxWidth'),
+        infinityToast: anyNamed('infinityToast'),
+        backgroundColor: anyNamed('backgroundColor'),
+        textColor: anyNamed('textColor'),
+        textActionColor: anyNamed('textActionColor'),
+        textStyle: anyNamed('textStyle'),
+        padding: anyNamed('padding'),
+        textAlign: anyNamed('textAlign'),
+        duration: anyNamed('duration'),
+      )).captured.single as Function;
+
+      mailboxController.mailboxDashBoardController.selectedMailbox.value =
+          PresentationMailbox(
+            MailboxId(Id('other-mailbox')),
+            accountId: AccountId(Id('other')),
+          );
+      clearInteractions(subscribeMailboxInteractor);
+      onActionClick();
+      await tester.pumpAndSettle();
+
+      final request = verify(subscribeMailboxInteractor.execute(
+        operationSession,
+        sharedAccountId,
+        captureAny,
+      )).captured.single as SubscribeMailboxRequest;
+      expect(request.mailboxId, MailboxId(Id('hidden-undo')));
+      expect(request.subscribeState, MailboxSubscribeState.enabled);
+      expect(request.subscribeAction, MailboxSubscribeAction.undo);
+      verifyNever(subscribeMailboxInteractor.execute(any, AccountId(Id('other')), any));
+    });
+
+    testWidgets('session replacement rejects registered subscribe undo', (tester) async {
+      final sharedAccountId = AccountId(Id('undo-stale'));
+      final operationSession = sessionWithSharedAccount(sharedAccountId);
+      when(getAllMailboxInteractor.execute(any, any))
+          .thenAnswer((_) => const Stream.empty());
+      mailboxController.mailboxDashBoardController.sessionCurrent = operationSession;
+      await tester.pumpWidget(GetMaterialApp(
+        localizationsDelegates: const [_TestAppLocalizationsDelegate()],
+        home: Builder(builder: (_) => const SizedBox()),
+      ));
+      await tester.pumpAndSettle();
+
+      mailboxController.handleSuccessViewState(SubscribeMailboxSuccess(
+        MailboxId(Id('hidden-undo-stale')),
+        MailboxSubscribeAction.unSubscribe,
+        mutationContext: MailboxMutationContext.fromOperation(
+          operationSession,
+          sharedAccountId,
+        ),
+        currentMailboxState: State('state'),
+      ));
+      await tester.pumpAndSettle();
+
+      final onActionClick = verify(appToast.showToastMessage(
+        any,
+        any,
+        actionName: anyNamed('actionName'),
+        onActionClick: captureAnyNamed('onActionClick'),
+        actionIcon: anyNamed('actionIcon'),
+        leadingIcon: anyNamed('leadingIcon'),
+        leadingSVGIcon: anyNamed('leadingSVGIcon'),
+        leadingSVGIconColor: anyNamed('leadingSVGIconColor'),
+        maxWidth: anyNamed('maxWidth'),
+        infinityToast: anyNamed('infinityToast'),
+        backgroundColor: anyNamed('backgroundColor'),
+        textColor: anyNamed('textColor'),
+        textActionColor: anyNamed('textActionColor'),
+        textStyle: anyNamed('textStyle'),
+        padding: anyNamed('padding'),
+        textAlign: anyNamed('textAlign'),
+        duration: anyNamed('duration'),
+      )).captured.single as Function;
+
+      mailboxController.mailboxDashBoardController.sessionCurrent = sessionWithSharedAccounts({});
+      clearInteractions(subscribeMailboxInteractor);
+      onActionClick();
+      await tester.pumpAndSettle();
+
+      verifyNever(subscribeMailboxInteractor.execute(any, any, any));
     });
   });
 

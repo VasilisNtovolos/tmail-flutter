@@ -4,6 +4,7 @@ import 'package:dartz/dartz.dart';
 import 'package:jmap_dart_client/jmap/account_id.dart';
 import 'package:jmap_dart_client/jmap/core/session/session.dart';
 import 'package:tmail_ui_user/features/mailbox/domain/model/move_mailbox_request.dart';
+import 'package:tmail_ui_user/features/mailbox/domain/model/mailbox_mutation_context.dart';
 import 'package:tmail_ui_user/features/mailbox/domain/repository/mailbox_repository.dart';
 import 'package:tmail_ui_user/features/mailbox/domain/state/move_mailbox_state.dart';
 
@@ -12,7 +13,12 @@ class MoveMailboxInteractor {
 
   MoveMailboxInteractor(this._mailboxRepository);
 
-  Stream<Either<Failure, Success>> execute(Session session, AccountId accountId, MoveMailboxRequest request) async* {
+  Stream<Either<Failure, Success>> execute(
+    Session session,
+    AccountId accountId,
+    MoveMailboxRequest request,
+  ) async* {
+    final mutationContext = MailboxMutationContext.fromOperation(session, accountId);
     try {
       yield Right<Failure, Success>(LoadingMoveMailbox());
       final result = await _mailboxRepository.moveMailbox(session, accountId, request);
@@ -23,12 +29,13 @@ class MoveMailboxInteractor {
             parentId: request.parentId,
             destinationMailboxId: request.destinationMailboxId,
             destinationMailboxDisplayName: request.destinationMailboxDisplayName,
+            mutationContext: mutationContext,
         ));
       } else {
-        yield Left<Failure, Success>(MoveMailboxFailure(null));
+        yield Left<Failure, Success>(MoveMailboxFailure(null, mutationContext: mutationContext));
       }
     } catch (e) {
-      yield Left<Failure, Success>(MoveMailboxFailure(e));
+      yield Left<Failure, Success>(MoveMailboxFailure(e, mutationContext: mutationContext));
     }
   }
 }

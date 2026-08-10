@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import 'package:get/get.dart';
 import 'package:jmap_dart_client/jmap/account_id.dart';
+import 'package:jmap_dart_client/jmap/core/capability/capability_identifier.dart';
 import 'package:jmap_dart_client/jmap/core/properties/properties.dart';
 import 'package:jmap_dart_client/jmap/core/state.dart' as jmap;
 import 'package:jmap_dart_client/jmap/mail/mailbox/mailbox.dart';
@@ -16,6 +17,7 @@ import 'package:tmail_ui_user/features/base/base_mailbox_controller.dart';
 import 'package:tmail_ui_user/features/mailbox/domain/constants/mailbox_constants.dart';
 import 'package:tmail_ui_user/features/mailbox/domain/model/mailbox_subscribe_action_state.dart';
 import 'package:tmail_ui_user/features/mailbox/domain/model/mailbox_subscribe_state.dart';
+import 'package:tmail_ui_user/features/mailbox/domain/model/mailbox_mutation_context.dart';
 import 'package:tmail_ui_user/features/mailbox/domain/model/subscribe_mailbox_request.dart';
 import 'package:tmail_ui_user/features/mailbox/domain/model/subscribe_multiple_mailbox_request.dart';
 import 'package:tmail_ui_user/features/mailbox/domain/state/get_all_mailboxes_state.dart';
@@ -40,6 +42,7 @@ class MailboxVisibilityController extends BaseMailboxController {
   final _accountDashBoardController = Get.find<ManageAccountDashBoardController>();
   final mailboxListScrollController = ScrollController();
   final foldersExpandMode = Rx(ExpandMode.EXPAND);
+  bool _isClosed = false;
 
   @override
   AccountId? get primaryAccountIdForMailboxIdentity =>
@@ -146,21 +149,28 @@ class MailboxVisibilityController extends BaseMailboxController {
   }
 
   void _subscribeMailboxSuccess(SubscribeMailboxSuccess subscribeMailboxSuccess) {
+    if (!_isMutationCompletionCurrent(subscribeMailboxSuccess.mutationContext)) return;
     if (subscribeMailboxSuccess.subscribeAction == MailboxSubscribeAction.unSubscribe
         && currentOverlayContext != null
         && currentContext != null) {
-        _showToastSubscribeMailboxSuccess(subscribeMailboxSuccess.mailboxId);
+        _showToastSubscribeMailboxSuccess(
+          subscribeMailboxSuccess.mutationContext,
+          subscribeMailboxSuccess.mailboxId,
+        );
     }
 
     _refreshMailboxChanges(
       newMailboxState: subscribeMailboxSuccess.currentMailboxState,
+      mutationContext: subscribeMailboxSuccess.mutationContext,
       properties: MailboxConstants.propertiesDefault
     );
   }
 
   void _handleUnsubscribeMultipleMailboxHasSomeSuccess(SubscribeMultipleMailboxHasSomeSuccess subscribeMailboxSuccess) {
+    if (!_isMutationCompletionCurrent(subscribeMailboxSuccess.mutationContext)) return;
     if(subscribeMailboxSuccess.subscribeAction == MailboxSubscribeAction.unSubscribe) {
       _showToastSubscribeMailboxSuccess(
+        subscribeMailboxSuccess.mutationContext,
         subscribeMailboxSuccess.parentMailboxId,
         listDescendantMailboxIds: subscribeMailboxSuccess.mailboxIdsSubscribe
       );
@@ -168,13 +178,16 @@ class MailboxVisibilityController extends BaseMailboxController {
 
     _refreshMailboxChanges(
       newMailboxState: subscribeMailboxSuccess.currentMailboxState,
+      mutationContext: subscribeMailboxSuccess.mutationContext,
       properties: MailboxConstants.propertiesDefault
     );
   }
 
   void _handleUnsubscribeMultipleMailboxAllSuccess(SubscribeMultipleMailboxAllSuccess subscribeMailboxSuccess) {
+    if (!_isMutationCompletionCurrent(subscribeMailboxSuccess.mutationContext)) return;
     if(subscribeMailboxSuccess.subscribeAction == MailboxSubscribeAction.unSubscribe) {
       _showToastSubscribeMailboxSuccess(
+          subscribeMailboxSuccess.mutationContext,
           subscribeMailboxSuccess.parentMailboxId,
           listDescendantMailboxIds: subscribeMailboxSuccess.mailboxIdsSubscribe
       );
@@ -182,13 +195,18 @@ class MailboxVisibilityController extends BaseMailboxController {
 
     _refreshMailboxChanges(
       newMailboxState: subscribeMailboxSuccess.currentMailboxState,
+      mutationContext: subscribeMailboxSuccess.mutationContext,
       properties: MailboxConstants.propertiesDefault
     );
   }
 
-  void _refreshMailboxChanges({jmap.State? newMailboxState, Properties? properties}) {
-    final session = _accountDashBoardController.sessionCurrent;
-    final accountId = _accountDashBoardController.accountId.value;
+  void _refreshMailboxChanges({
+    jmap.State? newMailboxState,
+    Properties? properties,
+    MailboxMutationContext? mutationContext,
+  }) {
+    final session = mutationContext?.session ?? _accountDashBoardController.sessionCurrent;
+    final accountId = mutationContext?.accountId ?? _accountDashBoardController.accountId.value;
     final mailboxState = newMailboxState ?? currentMailboxState;
     if (session != null && accountId != null && mailboxState != null) {
       refreshMailboxChanges(
@@ -201,6 +219,7 @@ class MailboxVisibilityController extends BaseMailboxController {
   }
 
   void _showToastSubscribeMailboxSuccess(
+      MailboxMutationContext mutationContext,
       MailboxId mailboxIdSubscribed,
       {List<MailboxId>? listDescendantMailboxIds}
   ) {
@@ -209,18 +228,11 @@ class MailboxVisibilityController extends BaseMailboxController {
         currentOverlayContext!,
         AppLocalizations.of(currentContext!).toastMsgHideFolderSuccess,
         actionName: AppLocalizations.of(currentContext!).undo,
-        onActionClick: () {
-          final mailbox = findMailboxNodeById(mailboxIdSubscribed)?.item;
-          if (mailbox == null) return;
-          _subscribeMailboxAction(
-            mailbox,
-            SubscribeMailboxRequest(
-            mailboxIdSubscribed,
-            MailboxSubscribeState.enabled,
-            MailboxSubscribeAction.subscribe
-            ),
-          );
-        },
+        onActionClick: () => _undoUnsubscribeMailboxAction(
+          mutationContext,
+          mailboxIdSubscribed,
+          listDescendantMailboxIds: listDescendantMailboxIds,
+        ),
         leadingSVGIconColor: Colors.white,
         leadingSVGIcon: imagePaths.icFolderMailbox,
         backgroundColor: AppColor.toastSuccessBackgroundColor,
@@ -230,8 +242,60 @@ class MailboxVisibilityController extends BaseMailboxController {
     }
   }
 
+  void _undoUnsubscribeMailboxAction(
+    MailboxMutationContext mutationContext,
+    MailboxId mailboxIdSubscribed, {
+    List<MailboxId>? listDescendantMailboxIds,
+  }) {
+    if (!_isMutationUndoCurrent(mutationContext)) return;
+    if (listDescendantMailboxIds != null && listDescendantMailboxIds.isNotEmpty) {
+      consumeState(_subscribeMultipleMailboxInteractor!.execute(
+        mutationContext.session,
+        mutationContext.accountId,
+        SubscribeMultipleMailboxRequest(
+          mailboxIdSubscribed,
+          listDescendantMailboxIds,
+          MailboxSubscribeState.enabled,
+          MailboxSubscribeAction.subscribe,
+        ),
+      ));
+    } else {
+      consumeState(_subscribeMailboxInteractor!.execute(
+        mutationContext.session,
+        mutationContext.accountId,
+        SubscribeMailboxRequest(
+          mailboxIdSubscribed,
+          MailboxSubscribeState.enabled,
+          MailboxSubscribeAction.subscribe,
+        ),
+      ));
+    }
+  }
+
+  bool _isMutationCompletionCurrent(MailboxMutationContext mutationContext) =>
+      !_isClosed &&
+      identical(
+        _accountDashBoardController.sessionCurrent,
+        mutationContext.session,
+      ) &&
+      _accountDashBoardController.accountId.value == mutationContext.accountId &&
+      mutationContext.session
+              .primaryAccounts[CapabilityIdentifier.jmapMail] ==
+          mutationContext.primaryAccountId &&
+      mutationContext.session.accounts.containsKey(mutationContext.accountId);
+
+  bool _isMutationUndoCurrent(MailboxMutationContext mutationContext) =>
+      !_isClosed &&
+      identical(
+        _accountDashBoardController.sessionCurrent,
+        mutationContext.session,
+      ) &&
+      mutationContext.session.accounts.containsKey(mutationContext.accountId);
+
   @override
   void onClose() {
+    if (_isClosed) return;
+    _isClosed = true;
     mailboxListScrollController.dispose();
     super.onClose();
   }
