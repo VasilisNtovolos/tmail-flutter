@@ -746,12 +746,26 @@ class MailboxController extends BaseMailboxController
     }
   }
 
+  /// The account-scoped key of a mailbox affected by an email action.
+  ///
+  /// Email actions run against the currently viewed mailbox's account (a
+  /// delegated account when an "Other Users" mailbox is open), so the affected
+  /// unread/total counters live in that account's tree. Resolving by bare id
+  /// against the primary account would leave the delegated counter stale, or
+  /// worse, update a same-id primary mailbox instead.
+  MailboxKey? _affectedMailboxKey(MailboxId? affectedMailboxId) {
+    if (affectedMailboxId == null) return null;
+    final accountId = selectedMailbox?.accountId ?? primaryAccountId;
+    if (accountId == null) return null;
+    return MailboxKey(accountId, affectedMailboxId);
+  }
+
   void _handleMarkEmailsAsReadOrUnread({
     required MailboxId? affectedMailboxId,
     int? readCount,
     int? unreadCount,
   }) {
-    final mailboxKey = primaryMailboxKey(affectedMailboxId);
+    final mailboxKey = _affectedMailboxKey(affectedMailboxId);
     if (mailboxKey == null) return;
 
     updateUnreadCountOfMailboxByKey(
@@ -763,7 +777,7 @@ class MailboxController extends BaseMailboxController
   void _handleMarkMailboxAsRead({
     required MailboxId? affectedMailboxId
   }) {
-    final mailboxKey = primaryMailboxKey(affectedMailboxId);
+    final mailboxKey = _affectedMailboxKey(affectedMailboxId);
     if (mailboxKey == null) return;
 
     clearUnreadCount(mailboxKey);
@@ -786,7 +800,7 @@ class MailboxController extends BaseMailboxController
     required MailboxId? affectedMailboxId,
     required int totalEmailsChanged,
   }) {
-    final mailboxKey = primaryMailboxKey(affectedMailboxId);
+    final mailboxKey = _affectedMailboxKey(affectedMailboxId);
     if (mailboxKey == null) return;
 
     updateMailboxTotalEmailsCountByKey(
@@ -807,7 +821,7 @@ class MailboxController extends BaseMailboxController
       final unreadEmailMovedCount = originalMailboxIdWithEmailIds.value
           .where((emailId) => emailIdsWithReadStatus[emailId] == false)
           .length;
-      final originalMailboxKey = primaryMailboxKey(originalMailboxId);
+      final originalMailboxKey = _affectedMailboxKey(originalMailboxId);
       if (originalMailboxKey == null) continue;
       updateMailboxTotalEmailsCountByKey(
         originalMailboxKey,
@@ -820,7 +834,7 @@ class MailboxController extends BaseMailboxController
     }
 
     // Update changes in destination mailbox
-    final destinationMailboxKey = primaryMailboxKey(destinationMailboxId);
+    final destinationMailboxKey = _affectedMailboxKey(destinationMailboxId);
     if (destinationMailboxKey == null) return;
     updateMailboxTotalEmailsCountByKey(
       destinationMailboxKey,

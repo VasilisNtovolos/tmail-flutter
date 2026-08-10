@@ -311,6 +311,14 @@ class MailboxDashBoardController extends ReloadableController
   final selectedMailbox = Rxn<PresentationMailbox>();
   final selectedEmail = Rxn<PresentationEmail>();
   final accountId = Rxn<AccountId>();
+
+  /// The account an email mutation must run against: the currently viewed
+  /// mailbox's account when it is a delegated ("Other Users") mailbox, otherwise
+  /// the primary account. Every email action (move, mark read, star, delete and
+  /// their undo) resolves its account through this so it hits the owner account
+  /// instead of always the primary one.
+  AccountId? get emailActionAccountId =>
+      selectedMailbox.value?.accountId ?? accountId.value;
   final dashBoardAction = Rxn<UIAction>();
   final mailboxUIAction = Rxn<MailboxUIAction>();
   final emailUIAction = Rxn<EmailUIAction>();
@@ -1246,7 +1254,10 @@ class MailboxDashBoardController extends ReloadableController
     MoveToMailboxRequest newMoveRequest,
     Map<EmailId, bool> emailIdsWithReadStatus,
   ) {
-    final currentAccountId = accountId.value;
+    // A move never crosses accounts, so the undo runs against the same account
+    // the emails are being viewed in (delegated when an Other Users mailbox is
+    // open), not always the primary account.
+    final currentAccountId = emailActionAccountId;
     final session = sessionCurrent;
     if (currentAccountId != null && session != null) {
       moveToMailbox(
@@ -1272,7 +1283,7 @@ class MailboxDashBoardController extends ReloadableController
   }
 
   void deleteEmailPermanently(PresentationEmail email) {
-    final currentAccountId = accountId.value;
+    final currentAccountId = emailActionAccountId;
     final session = sessionCurrent;
     if (currentAccountId != null && session != null && email.id != null) {
       consumeState(_deleteEmailPermanentlyInteractor.execute(
@@ -1304,10 +1315,11 @@ class MailboxDashBoardController extends ReloadableController
     MarkReadAction markReadAction,
     MailboxId? mailboxId,
   ) {
-    if (accountId.value != null && sessionCurrent != null) {
+    final currentAccountId = emailActionAccountId;
+    if (currentAccountId != null && sessionCurrent != null) {
       consumeState(_markAsEmailReadInteractor.execute(
         sessionCurrent!,
-        accountId.value!,
+        currentAccountId,
         emailId,
         readActions,
         markReadAction,
@@ -1317,10 +1329,11 @@ class MailboxDashBoardController extends ReloadableController
   }
 
   void markAsStarEmail(PresentationEmail presentationEmail, MarkStarAction action) {
-    if (accountId.value != null && sessionCurrent != null) {
+    final currentAccountId = emailActionAccountId;
+    if (currentAccountId != null && sessionCurrent != null) {
       consumeState(_markAsStarEmailInteractor.execute(
         sessionCurrent!,
-        accountId.value!,
+        currentAccountId,
         presentationEmail.id!,
         action));
     }
@@ -1337,10 +1350,11 @@ class MailboxDashBoardController extends ReloadableController
       })
       .toList();
 
-    if (accountId.value != null && sessionCurrent != null) {
+    final currentAccountId = emailActionAccountId;
+    if (currentAccountId != null && sessionCurrent != null) {
       consumeState(_markAsMultipleEmailReadInteractor.execute(
         sessionCurrent!,
-        accountId.value!,
+        currentAccountId,
         listEmailNeedMarkAsRead.listEmailIds,
         readActions,
         listEmailNeedMarkAsRead.emailIdsByMailboxId,
@@ -1397,7 +1411,8 @@ class MailboxDashBoardController extends ReloadableController
   }
 
   void markAsStarSelectedMultipleEmail(List<PresentationEmail> listPresentationEmail, MarkStarAction markStarAction) {
-    if (accountId.value != null && sessionCurrent != null) {
+    final currentAccountId = emailActionAccountId;
+    if (currentAccountId != null && sessionCurrent != null) {
       final listEmailIds = listPresentationEmail
           .where((email) {
             if (markStarAction == MarkStarAction.unMarkStar) {
@@ -1411,7 +1426,7 @@ class MailboxDashBoardController extends ReloadableController
 
       consumeState(_markAsStarMultipleEmailInteractor.execute(
         sessionCurrent!,
-        accountId.value!,
+        currentAccountId,
         listEmailIds,
         markStarAction));
     }
@@ -1442,9 +1457,12 @@ class MailboxDashBoardController extends ReloadableController
     List<PresentationEmail> listEmails, {
     VoidCallback? onCallbackAction,
   }) async {
-    if (accountId.value != null) {
+    // Scope the picker to the account that owns the emails (delegated when an
+    // Other Users mailbox is open); Email/set cannot cross accounts.
+    final currentAccountId = emailActionAccountId;
+    if (currentAccountId != null) {
       final arguments = DestinationPickerArguments(
-        accountId.value!,
+        currentAccountId,
         MailboxActions.moveEmail,
         sessionCurrent,
       );
@@ -1455,8 +1473,7 @@ class MailboxDashBoardController extends ReloadableController
 
       if (destinationMailbox != null &&
           destinationMailbox is PresentationMailbox &&
-          sessionCurrent != null &&
-          accountId.value != null
+          sessionCurrent != null
       ) {
         onCallbackAction?.call();
 
@@ -1736,17 +1753,19 @@ class MailboxDashBoardController extends ReloadableController
     MoveToMailboxRequest newMoveRequest,
     Map<EmailId, bool> emailIdsWithReadStatus,
   ) {
-    if (accountId.value != null && sessionCurrent != null) {
+    final currentAccountId = emailActionAccountId;
+    if (currentAccountId != null && sessionCurrent != null) {
       consumeState(_moveMultipleEmailToMailboxInteractor.execute(
         sessionCurrent!,
-        accountId.value!,
+        currentAccountId,
         newMoveRequest,
         emailIdsWithReadStatus));
     }
   }
 
   void unSpamSelectedMultipleEmail(List<PresentationEmail> listEmail) {
-    if (accountId.value == null || sessionCurrent == null) {
+    final currentAccountId = emailActionAccountId;
+    if (currentAccountId == null || sessionCurrent == null) {
       consumeState(Stream.value(
         Left(MoveMultipleEmailToMailboxFailure(
           EmailActionType.unSpam,
@@ -1782,7 +1801,7 @@ class MailboxDashBoardController extends ReloadableController
 
     moveSelectedEmailMultipleToMailboxAction(
       sessionCurrent!,
-      accountId.value!,
+      currentAccountId,
       MoveToMailboxRequest(
         {spamMailboxId!: listEmail.listEmailIds},
         inboxMailboxId,
@@ -1801,7 +1820,8 @@ class MailboxDashBoardController extends ReloadableController
     required MailboxId destinationMailboxId,
     required EmailActionType emailActionType,
   }) {
-    if (sessionCurrent == null || accountId.value == null) {
+    final currentAccountId = emailActionAccountId;
+    if (sessionCurrent == null || currentAccountId == null) {
       consumeState(Stream.value(
         Left(MoveMultipleEmailToMailboxFailure(
           emailActionType,
@@ -1838,7 +1858,7 @@ class MailboxDashBoardController extends ReloadableController
 
     moveSelectedEmailMultipleToMailboxAction(
       sessionCurrent!,
-      accountId.value!,
+      currentAccountId,
       moveRequest,
       emailIdsWithReadStatus,
     );
@@ -1972,10 +1992,11 @@ class MailboxDashBoardController extends ReloadableController
   void _deleteMultipleEmailsPermanently(List<PresentationEmail> listEmails, {Function? onCancelSelectionEmail}) {
     onCancelSelectionEmail?.call();
 
-    if (accountId.value != null && sessionCurrent != null) {
+    final currentAccountId = emailActionAccountId;
+    if (currentAccountId != null && sessionCurrent != null) {
       consumeState(_deleteMultipleEmailsPermanentlyInteractor.execute(
         sessionCurrent!,
-        accountId.value!,
+        currentAccountId,
         listEmails.listEmailIds,
         listEmails.firstOrNull?.mailboxContain?.mailboxId));
     }

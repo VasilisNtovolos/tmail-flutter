@@ -54,7 +54,8 @@ extension HandleActionTypeForEmailSelection on MailboxDashBoardController {
       destinationMailboxId = getMailboxIdByRole(PresentationMailbox.roleArchive);
     }
 
-    if (accountId.value == null ||
+    final currentAccountId = emailActionAccountId;
+    if (currentAccountId == null ||
         destinationMailboxId == null ||
         sessionCurrent == null) {
       consumeState(
@@ -114,7 +115,7 @@ extension HandleActionTypeForEmailSelection on MailboxDashBoardController {
 
     moveSelectedEmailMultipleToMailboxAction(
       sessionCurrent!,
-      accountId.value!,
+      currentAccountId,
       MoveToMailboxRequest(
         mapEmailIdsByMailboxId,
         destinationMailboxId,

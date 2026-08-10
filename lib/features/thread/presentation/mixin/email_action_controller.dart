@@ -200,7 +200,10 @@ mixin EmailActionController {
     PresentationEmail email,
     {PresentationMailbox? mailboxContain}
   ) async {
-    final accountId = mailboxDashBoardController.accountId.value;
+    // Open the picker for the account that owns the email being moved (delegated
+    // when an Other Users mailbox is open), so the move runs against that
+    // account. Email/set cannot cross accounts.
+    final accountId = mailboxDashBoardController.emailActionAccountId;
     final session = mailboxDashBoardController.sessionCurrent;
 
     if (mailboxContain != null && accountId != null) {

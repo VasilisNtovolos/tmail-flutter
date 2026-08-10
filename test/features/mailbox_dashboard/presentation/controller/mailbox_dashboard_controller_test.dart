@@ -19,7 +19,9 @@ import 'package:jmap_dart_client/jmap/mail/email/email.dart';
 import 'package:jmap_dart_client/jmap/mail/mailbox/mailbox.dart';
 import 'package:mockito/annotations.dart';
 import 'package:mockito/mockito.dart';
+import 'package:model/email/mark_star_action.dart';
 import 'package:model/email/presentation_email.dart';
+import 'package:model/email/read_actions.dart';
 import 'package:model/mailbox/presentation_mailbox.dart';
 import 'package:core/utils/platform_info.dart';
 import 'package:model/email/email_action_type.dart';
@@ -754,6 +756,73 @@ void main() {
           any,
         )).captured;
         expect(captured[0], testSession);
+        expect(captured[1], delegatedAccountId);
+        expect(captured[1], isNot(testAccountId));
+      },
+    );
+
+    test(
+      'WHEN marking selected emails read while viewing a delegated mailbox\n'
+      'SHOULD run the mark-read against the owning delegated account',
+      () {
+        final delegatedAccountId = AccountId(Id('delegated-1'));
+        final delegatedMailbox = PresentationMailbox(
+          MailboxId(Id('99')),
+          accountId: delegatedAccountId,
+          isSharedAccount: true,
+        );
+        final email = PresentationEmail(
+          id: EmailId(Id('e1')),
+          mailboxIds: {delegatedMailbox.id: true},
+        );
+
+        mailboxDashboardController.selectedMailbox.value = delegatedMailbox;
+
+        mailboxDashboardController.markAsReadSelectedMultipleEmail(
+          [email],
+          ReadActions.markAsRead,
+        );
+
+        final captured = verify(markAsMultipleEmailReadInteractor.execute(
+          captureAny,
+          captureAny,
+          any,
+          any,
+          any,
+        )).captured;
+        expect(captured[1], delegatedAccountId);
+        expect(captured[1], isNot(testAccountId));
+      },
+    );
+
+    test(
+      'WHEN starring selected emails while viewing a delegated mailbox\n'
+      'SHOULD run the star against the owning delegated account',
+      () {
+        final delegatedAccountId = AccountId(Id('delegated-1'));
+        final delegatedMailbox = PresentationMailbox(
+          MailboxId(Id('99')),
+          accountId: delegatedAccountId,
+          isSharedAccount: true,
+        );
+        final email = PresentationEmail(
+          id: EmailId(Id('e1')),
+          mailboxIds: {delegatedMailbox.id: true},
+        );
+
+        mailboxDashboardController.selectedMailbox.value = delegatedMailbox;
+
+        mailboxDashboardController.markAsStarSelectedMultipleEmail(
+          [email],
+          MarkStarAction.markStar,
+        );
+
+        final captured = verify(markAsStarMultipleEmailInteractor.execute(
+          captureAny,
+          captureAny,
+          any,
+          any,
+        )).captured;
         expect(captured[1], delegatedAccountId);
         expect(captured[1], isNot(testAccountId));
       },
