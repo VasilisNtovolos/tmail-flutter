@@ -1,11 +1,13 @@
 import 'package:core/presentation/state/failure.dart';
 import 'package:core/presentation/state/success.dart';
+import 'package:jmap_dart_client/jmap/account_id.dart';
 import 'package:jmap_dart_client/jmap/mail/email/email.dart';
 import 'package:model/email/mark_star_action.dart';
 
 class LoadingMarkAsStarMultipleEmailAll extends UIState {}
 
 class MarkAsStarMultipleEmailAllSuccess extends UIState {
+  final AccountId accountId;
   final int countMarkStarSuccess;
   final MarkStarAction markStarAction;
   final List<EmailId> emailIds;
@@ -13,11 +15,12 @@ class MarkAsStarMultipleEmailAllSuccess extends UIState {
   MarkAsStarMultipleEmailAllSuccess(
     this.countMarkStarSuccess,
     this.markStarAction,
-    this.emailIds,
-  );
+    this.emailIds, {
+    required this.accountId,
+  });
 
   @override
-  List<Object?> get props => [countMarkStarSuccess, markStarAction, emailIds];
+  List<Object?> get props => [accountId, countMarkStarSuccess, markStarAction, emailIds];
 }
 
 class MarkAsStarMultipleEmailAllFailure extends FeatureFailure {
@@ -30,6 +33,7 @@ class MarkAsStarMultipleEmailAllFailure extends FeatureFailure {
 }
 
 class MarkAsStarMultipleEmailHasSomeEmailFailure extends UIState {
+  final AccountId accountId;
   final int countMarkStarSuccess;
   final MarkStarAction markStarAction;
   final List<EmailId> successEmailIds;
@@ -37,11 +41,12 @@ class MarkAsStarMultipleEmailHasSomeEmailFailure extends UIState {
   MarkAsStarMultipleEmailHasSomeEmailFailure(
     this.countMarkStarSuccess,
     this.markStarAction,
-    this.successEmailIds,
-  );
+    this.successEmailIds, {
+    required this.accountId,
+  });
 
   @override
-  List<Object?> get props => [countMarkStarSuccess, markStarAction, successEmailIds];
+  List<Object?> get props => [accountId, countMarkStarSuccess, markStarAction, successEmailIds];
 }
 
 class MarkAsStarMultipleEmailFailure extends FeatureFailure {

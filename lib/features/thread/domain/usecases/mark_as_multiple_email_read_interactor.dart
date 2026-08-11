@@ -42,6 +42,7 @@ class MarkAsMultipleEmailReadInteractor {
           result.emailIdsSuccess,
           readAction,
           markSuccessEmailIdsByMailboxId,
+          accountId: accountId,
         ));
       } else if (result.emailIdsSuccess.isEmpty) {
         yield Left(MarkAsMultipleEmailReadAllFailure(readAction));
@@ -50,6 +51,7 @@ class MarkAsMultipleEmailReadInteractor {
           result.emailIdsSuccess,
           readAction,
           markSuccessEmailIdsByMailboxId,
+          accountId: accountId,
         ));
       }
     } catch (e) {

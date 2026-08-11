@@ -1,11 +1,13 @@
 import 'package:core/presentation/state/failure.dart';
 import 'package:core/presentation/state/success.dart';
+import 'package:jmap_dart_client/jmap/account_id.dart';
 import 'package:jmap_dart_client/jmap/mail/email/email.dart';
 import 'package:jmap_dart_client/jmap/mail/mailbox/mailbox.dart';
 import 'package:model/email/read_actions.dart';
 import 'package:tmail_ui_user/features/email/domain/model/mark_read_action.dart';
 
 class MarkAsEmailReadSuccess extends UIState {
+  final AccountId accountId;
   final EmailId emailId;
   final ReadActions readActions;
   final MarkReadAction markReadAction;
@@ -15,11 +17,12 @@ class MarkAsEmailReadSuccess extends UIState {
     this.emailId,
     this.readActions,
     this.markReadAction,
-    this.mailboxId,
-  );
+    this.mailboxId, {
+    required this.accountId,
+  });
 
   @override
-  List<Object?> get props => [emailId, readActions, markReadAction, mailboxId];
+  List<Object?> get props => [accountId, emailId, readActions, markReadAction, mailboxId];
 }
 
 class MarkAsEmailReadFailure extends FeatureFailure {

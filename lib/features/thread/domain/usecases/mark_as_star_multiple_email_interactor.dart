@@ -29,6 +29,7 @@ class MarkAsStarMultipleEmailInteractor {
           emailIds.length,
           markStarAction,
           result.emailIdsSuccess,
+          accountId: accountId,
         ));
       } else if (result.emailIdsSuccess.isEmpty) {
         yield Left(MarkAsStarMultipleEmailAllFailure(markStarAction));
@@ -37,6 +38,7 @@ class MarkAsStarMultipleEmailInteractor {
           result.emailIdsSuccess.length,
           markStarAction,
           result.emailIdsSuccess,
+          accountId: accountId,
         ));
       }
     } catch (e) {

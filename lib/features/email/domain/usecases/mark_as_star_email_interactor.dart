@@ -26,7 +26,11 @@ class MarkAsStarEmailInteractor {
         [emailId],
         markStarAction,
       );
-      yield Right(MarkAsStarEmailSuccess(markStarAction, emailId));
+      yield Right(MarkAsStarEmailSuccess(
+        markStarAction,
+        emailId,
+        accountId: accountId,
+      ));
     } catch (e) {
       yield Left(MarkAsStarEmailFailure(markStarAction, exception: e));
     }

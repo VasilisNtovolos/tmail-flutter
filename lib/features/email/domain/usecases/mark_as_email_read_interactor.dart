@@ -39,6 +39,7 @@ class MarkAsEmailReadInteractor {
           readAction,
           markReadAction,
           mailboxId,
+          accountId: accountId,
       ));
       }
     } catch (e) {

@@ -23,7 +23,11 @@ class DeleteEmailPermanentlyInteractor {
       yield Right<Failure, Success>(StartDeleteEmailPermanently());
       final result = await _emailRepository.deleteEmailPermanently(session, accountId, emailId);
       if (result) {
-        yield Right<Failure, Success>(DeleteEmailPermanentlySuccess(emailId, mailboxId));
+        yield Right<Failure, Success>(DeleteEmailPermanentlySuccess(
+          emailId,
+          mailboxId,
+          accountId: accountId,
+        ));
       } else {
         yield Left<Failure, Success>(DeleteEmailPermanentlyFailure(null));
       }

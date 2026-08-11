@@ -1,5 +1,6 @@
 import 'package:core/presentation/state/failure.dart';
 import 'package:core/presentation/state/success.dart';
+import 'package:jmap_dart_client/jmap/account_id.dart';
 import 'package:jmap_dart_client/jmap/mail/email/email.dart';
 import 'package:jmap_dart_client/jmap/mail/mailbox/mailbox.dart';
 import 'package:model/model.dart';
@@ -8,6 +9,7 @@ import 'package:tmail_ui_user/features/email/domain/model/move_action.dart';
 class LoadingMoveToMailbox extends UIState {}
 
 class MoveToMailboxSuccess extends UIState {
+  final AccountId accountId;
   final EmailId emailId;
   final MailboxId currentMailboxId;
   final MailboxId destinationMailboxId;
@@ -24,6 +26,7 @@ class MoveToMailboxSuccess extends UIState {
     this.moveAction,
     this.emailActionType,
     {
+      required this.accountId,
       this.destinationPath,
       required this.originalMailboxIdsWithEmailIds,
       required this.emailIdsWithReadStatus,
@@ -32,6 +35,7 @@ class MoveToMailboxSuccess extends UIState {
 
   @override
   List<Object?> get props => [
+    accountId,
     emailId,
     currentMailboxId,
     destinationMailboxId,

@@ -1,16 +1,22 @@
 import 'package:core/presentation/state/failure.dart';
 import 'package:core/presentation/state/success.dart';
+import 'package:jmap_dart_client/jmap/account_id.dart';
 import 'package:jmap_dart_client/jmap/mail/email/email.dart';
 import 'package:model/email/mark_star_action.dart';
 
 class MarkAsStarEmailSuccess extends UIState {
+  final AccountId accountId;
   final MarkStarAction markStarAction;
   final EmailId emailId;
 
-  MarkAsStarEmailSuccess(this.markStarAction, this.emailId);
+  MarkAsStarEmailSuccess(
+    this.markStarAction,
+    this.emailId, {
+    required this.accountId,
+  });
 
   @override
-  List<Object?> get props => [markStarAction, emailId];
+  List<Object?> get props => [accountId, markStarAction, emailId];
 }
 
 class MarkAsStarEmailFailure extends FeatureFailure {

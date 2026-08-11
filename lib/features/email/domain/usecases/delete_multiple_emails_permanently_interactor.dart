@@ -23,9 +23,17 @@ class DeleteMultipleEmailsPermanentlyInteractor {
       yield Right<Failure, Success>(LoadingDeleteMultipleEmailsPermanentlyAll());
       final listResult = await _emailRepository.deleteMultipleEmailsPermanently(session, accountId, emailIds);
       if (listResult.emailIdsSuccess.length == emailIds.length) {
-        yield Right<Failure, Success>(DeleteMultipleEmailsPermanentlyAllSuccess(listResult.emailIdsSuccess, mailboxId));
+        yield Right<Failure, Success>(DeleteMultipleEmailsPermanentlyAllSuccess(
+          listResult.emailIdsSuccess,
+          mailboxId,
+          accountId: accountId,
+        ));
       } else if (listResult.emailIdsSuccess.isNotEmpty) {
-        yield Right<Failure, Success>(DeleteMultipleEmailsPermanentlyHasSomeEmailFailure(listResult.emailIdsSuccess, mailboxId));
+        yield Right<Failure, Success>(DeleteMultipleEmailsPermanentlyHasSomeEmailFailure(
+          listResult.emailIdsSuccess,
+          mailboxId,
+          accountId: accountId,
+        ));
       } else {
         yield Left<Failure, Success>(DeleteMultipleEmailsPermanentlyAllFailure());
       }

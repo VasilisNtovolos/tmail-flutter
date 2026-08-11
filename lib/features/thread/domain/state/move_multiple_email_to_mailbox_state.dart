@@ -1,5 +1,6 @@
 import 'package:core/presentation/state/failure.dart';
 import 'package:core/presentation/state/success.dart';
+import 'package:jmap_dart_client/jmap/account_id.dart';
 import 'package:jmap_dart_client/jmap/mail/email/email.dart';
 import 'package:jmap_dart_client/jmap/mail/mailbox/mailbox.dart';
 import 'package:model/email/email_action_type.dart';
@@ -8,6 +9,7 @@ import 'package:tmail_ui_user/features/email/domain/model/move_action.dart';
 class LoadingMoveMultipleEmailToMailboxAll extends UIState {}
 
 class MoveMultipleEmailToMailboxAllSuccess extends UIState {
+  final AccountId accountId;
   final List<EmailId> movedListEmailId;
   final MailboxId destinationMailboxId;
   final MoveAction moveAction;
@@ -22,6 +24,7 @@ class MoveMultipleEmailToMailboxAllSuccess extends UIState {
     this.moveAction,
     this.emailActionType,
     {
+      required this.accountId,
       this.destinationPath,
       required this.originalMailboxIdsWithEmailIds,
       required this.emailIdsWithReadStatus,
@@ -30,6 +33,7 @@ class MoveMultipleEmailToMailboxAllSuccess extends UIState {
 
   @override
   List<Object?> get props => [
+    accountId,
     movedListEmailId,
     destinationMailboxId,
     moveAction,
@@ -51,6 +55,7 @@ class MoveMultipleEmailToMailboxAllFailure extends FeatureFailure {
 }
 
 class MoveMultipleEmailToMailboxHasSomeEmailFailure extends UIState {
+  final AccountId accountId;
   final List<EmailId> movedListEmailId;
   final MailboxId destinationMailboxId;
   final MoveAction moveAction;
@@ -65,6 +70,7 @@ class MoveMultipleEmailToMailboxHasSomeEmailFailure extends UIState {
     this.moveAction,
     this.emailActionType,
     {
+      required this.accountId,
       this.destinationPath,
       required this.originalMailboxIdsWithMoveSucceededEmailIds,
       required this.moveSucceededEmailIdsWithReadStatus,
@@ -73,6 +79,7 @@ class MoveMultipleEmailToMailboxHasSomeEmailFailure extends UIState {
 
   @override
   List<Object?> get props => [
+    accountId,
     movedListEmailId,
     destinationMailboxId,
     moveAction,

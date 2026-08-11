@@ -29,6 +29,7 @@ class MoveToMailboxInteractor {
           moveRequest.destinationMailboxId,
           moveRequest.moveAction,
           moveRequest.emailActionType,
+          accountId: accountId,
           destinationPath: moveRequest.destinationPath,
           originalMailboxIdsWithEmailIds: moveRequest.currentMailboxes,
           emailIdsWithReadStatus: emailIdsWithReadStatus,
