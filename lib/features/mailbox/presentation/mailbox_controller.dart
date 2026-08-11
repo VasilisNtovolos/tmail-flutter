@@ -1113,6 +1113,14 @@ class MailboxController extends BaseMailboxController
     final mapDefaultPresentationMailboxByRole = defaultMailboxTree.value.mapPresentationMailboxByRole;
 
     if (mailboxCurrent != null) {
+      if (mailboxCurrent.accountId != null) {
+        final refreshedMailbox =
+            mailboxDashBoardController.mapMailboxByKey[mailboxCurrent.key];
+        if (refreshedMailbox != null) {
+          return refreshedMailbox;
+        }
+      }
+
       if (mailboxCurrent.hasRole()) {
         return mapDefaultPresentationMailboxByRole.containsKey(mailboxCurrent.role,)
           ? mapDefaultPresentationMailboxByRole[mailboxCurrent.role]

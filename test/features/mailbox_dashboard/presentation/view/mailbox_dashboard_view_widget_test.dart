@@ -9,14 +9,20 @@ import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:get/get.dart';
+import 'package:jmap_dart_client/jmap/account_id.dart';
+import 'package:jmap_dart_client/jmap/core/account/account.dart';
 import 'package:jmap_dart_client/jmap/core/id.dart';
+import 'package:jmap_dart_client/jmap/core/session/session.dart';
 import 'package:jmap_dart_client/jmap/mail/email/email.dart';
+import 'package:jmap_dart_client/jmap/mail/mailbox/mailbox.dart';
 import 'package:mockito/annotations.dart';
 import 'package:mockito/mockito.dart';
 import 'package:model/email/presentation_email.dart';
 import 'package:model/extensions/email_extension.dart';
 import 'package:model/extensions/email_id_extensions.dart';
 import 'package:model/extensions/mailbox_extension.dart';
+import 'package:model/extensions/presentation_mailbox_extension.dart';
+import 'package:model/mailbox/mailbox_key.dart';
 import 'package:model/mailbox/presentation_mailbox.dart';
 import 'package:rxdart/subjects.dart';
 import 'package:tmail_ui_user/features/base/model/ui_keys.dart';
@@ -1044,6 +1050,272 @@ void main() {
           );
 
           WidgetFixtures.resetResponsive(tester);
+        },
+      );
+    });
+
+    group('Reload mailbox selection', () {
+      final delegatedAccountId = AccountId(Id('delegated-account'));
+      late PresentationMailbox primaryInbox;
+      late PresentationMailbox delegatedInboxBeforeReload;
+      late PresentationMailbox delegatedInboxAfterReload;
+      late List<PresentationMailbox> delegatedMailboxesAfterReload;
+      var reloadStarted = false;
+
+      Future<void> waitUntil(bool Function() condition) async {
+        for (var attempt = 0; attempt < 50; attempt++) {
+          if (condition()) return;
+          await Future<void>.value();
+        }
+        expect(condition(), isTrue);
+      }
+
+      setUp(() async {
+        reset(getAllMailboxInteractor);
+        final realTreeBuilder = TreeBuilder();
+
+        when(
+          treeBuilder.generateMailboxTreeInUI(
+            allMailboxes: anyNamed('allMailboxes'),
+            currentCollection: anyNamed('currentCollection'),
+            mailboxKeySelected: anyNamed('mailboxKeySelected'),
+            mailboxIdExpanded: anyNamed('mailboxIdExpanded'),
+            primaryAccountId: anyNamed('primaryAccountId'),
+          ),
+        ).thenAnswer(
+          (invocation) => realTreeBuilder.generateMailboxTreeInUI(
+            allMailboxes:
+                invocation.namedArguments[#allMailboxes]
+                    as List<PresentationMailbox>,
+            currentCollection:
+                invocation.namedArguments[#currentCollection]
+                    as MailboxCollection,
+            mailboxKeySelected:
+                invocation.namedArguments[#mailboxKeySelected] as MailboxKey?,
+            mailboxIdExpanded:
+                invocation.namedArguments[#mailboxIdExpanded] as MailboxId?,
+            primaryAccountId:
+                invocation.namedArguments[#primaryAccountId] as AccountId?,
+          ),
+        );
+        when(
+          treeBuilder.generateMailboxTreeInUIAfterRefreshChanges(
+            allMailboxes: anyNamed('allMailboxes'),
+            currentCollection: anyNamed('currentCollection'),
+            primaryAccountId: anyNamed('primaryAccountId'),
+          ),
+        ).thenAnswer(
+          (invocation) =>
+              realTreeBuilder.generateMailboxTreeInUIAfterRefreshChanges(
+                allMailboxes:
+                    invocation.namedArguments[#allMailboxes]
+                        as List<PresentationMailbox>,
+                currentCollection:
+                    invocation.namedArguments[#currentCollection]
+                        as MailboxCollection,
+                primaryAccountId:
+                    invocation.namedArguments[#primaryAccountId] as AccountId?,
+              ),
+        );
+        when(uuid.v1()).thenReturn('reload-selection-test-id');
+
+        primaryInbox = MailboxFixtures.inboxMailbox.toPresentationMailbox(
+          accountId: AccountFixtures.aliceAccountId,
+        );
+        delegatedInboxBeforeReload = MailboxFixtures.inboxMailbox
+            .toPresentationMailbox(accountId: delegatedAccountId)
+            .copyWith(name: MailboxName('Delegated Inbox before Reload'));
+        delegatedInboxAfterReload = delegatedInboxBeforeReload.copyWith(
+          name: MailboxName('Delegated Inbox after Reload'),
+        );
+        delegatedMailboxesAfterReload = [delegatedInboxAfterReload];
+        reloadStarted = false;
+
+        final baseSession = SessionFixtures.aliceSession;
+        final primaryAccount =
+            baseSession.accounts[AccountFixtures.aliceAccountId]!;
+        final delegatedSession = Session(
+          baseSession.capabilities,
+          {
+            ...baseSession.accounts,
+            delegatedAccountId: Account(
+              AccountName('delegate@domain.tld'),
+              false,
+              false,
+              primaryAccount.accountCapabilities,
+            ),
+          },
+          baseSession.primaryAccounts,
+          baseSession.username,
+          baseSession.apiUrl,
+          baseSession.downloadUrl,
+          baseSession.uploadUrl,
+          baseSession.eventSourceUrl,
+          baseSession.state,
+        );
+
+        when(
+          getAllMailboxInteractor.execute(
+            any,
+            any,
+            properties: anyNamed('properties'),
+          ),
+        ).thenAnswer((invocation) {
+          final requestedAccountId =
+              invocation.positionalArguments[1] as AccountId;
+          final mailboxes = requestedAccountId == delegatedAccountId
+              ? (reloadStarted
+                    ? delegatedMailboxesAfterReload
+                    : [delegatedInboxBeforeReload])
+              : [primaryInbox];
+          return Stream.value(
+            Right(
+              GetAllMailboxSuccess(
+                mailboxList: mailboxes,
+                currentMailboxState: MailboxFixtures.currentState,
+              ),
+            ),
+          );
+        });
+
+        mailboxDashboardController.accountId.value = null;
+        mailboxDashboardController.sessionCurrent = delegatedSession;
+        mailboxDashboardController.accountId.value =
+            AccountFixtures.aliceAccountId;
+
+        final delegatedKey = MailboxKey(
+          delegatedAccountId,
+          delegatedInboxBeforeReload.id,
+        );
+        await waitUntil(
+          () => mailboxDashboardController.mapMailboxByKey.containsKey(
+            delegatedKey,
+          ),
+        );
+      });
+
+      tearDown(() {
+        reset(getAllMailboxInteractor);
+      });
+
+      test(
+        'preserves the delegated MailboxKey and selects its refreshed object',
+        () async {
+          final delegatedKey = MailboxKey(
+            delegatedAccountId,
+            delegatedInboxBeforeReload.id,
+          );
+          expect(primaryInbox.id, delegatedInboxBeforeReload.id);
+          mailboxDashboardController.setSelectedMailbox(
+            mailboxDashboardController.mapMailboxByKey[delegatedKey],
+          );
+
+          reloadStarted = true;
+          await mailboxController.refreshAllMailbox();
+          await waitUntil(
+            () =>
+                mailboxDashboardController
+                    .mapMailboxByKey[delegatedKey]
+                    ?.name ==
+                delegatedInboxAfterReload.name,
+          );
+
+          final selected = mailboxDashboardController.selectedMailbox.value;
+          expect(selected?.key, delegatedKey);
+          expect(
+            selected,
+            same(mailboxDashboardController.mapMailboxByKey[delegatedKey]),
+          );
+          expect(selected, isNot(same(delegatedInboxBeforeReload)));
+          expect(selected?.name, delegatedInboxAfterReload.name);
+        },
+      );
+
+      test(
+        'falls back to primary Inbox when delegated key disappears',
+        () async {
+          final delegatedKey = MailboxKey(
+            delegatedAccountId,
+            delegatedInboxBeforeReload.id,
+          );
+          mailboxDashboardController.setSelectedMailbox(
+            mailboxDashboardController.mapMailboxByKey[delegatedKey],
+          );
+          delegatedMailboxesAfterReload = [];
+
+          reloadStarted = true;
+          await mailboxController.refreshAllMailbox();
+          await waitUntil(
+            () => !mailboxDashboardController.mapMailboxByKey.containsKey(
+              delegatedKey,
+            ),
+          );
+
+          expect(
+            mailboxDashboardController.selectedMailbox.value?.key,
+            MailboxKey(AccountFixtures.aliceAccountId, primaryInbox.id),
+          );
+        },
+      );
+
+      test('keeps primary Inbox selected as primary', () async {
+        final primaryKey = MailboxKey(
+          AccountFixtures.aliceAccountId,
+          primaryInbox.id,
+        );
+        final delegatedKey = MailboxKey(
+          delegatedAccountId,
+          delegatedInboxAfterReload.id,
+        );
+        mailboxDashboardController.setSelectedMailbox(
+          mailboxDashboardController.mapMailboxByKey[primaryKey],
+        );
+
+        reloadStarted = true;
+        await mailboxController.refreshAllMailbox();
+        await waitUntil(
+          () =>
+              mailboxDashboardController
+                  .mapMailboxByKey[delegatedKey]
+                  ?.name ==
+              delegatedInboxAfterReload.name,
+        );
+
+        expect(
+          mailboxDashboardController.selectedMailbox.value?.key,
+          primaryKey,
+        );
+
+        expect(
+          mailboxDashboardController.selectedMailbox.value,
+          same(mailboxDashboardController.mapMailboxByKey[primaryKey]),
+        );
+      });
+
+      test(
+        'leaves an account-less virtual mailbox selection unchanged',
+        () async {
+          mailboxDashboardController.setSelectedMailbox(
+            PresentationMailbox.favoriteFolder,
+          );
+
+          reloadStarted = true;
+          await mailboxController.refreshAllMailbox();
+          await waitUntil(
+            () =>
+                mailboxDashboardController
+                    .mapMailboxByKey[MailboxKey(
+                      delegatedAccountId,
+                      delegatedInboxAfterReload.id,
+                    )]
+                    ?.name ==
+                delegatedInboxAfterReload.name,
+          );
+
+          expect(
+            mailboxDashboardController.selectedMailbox.value,
+            same(PresentationMailbox.favoriteFolder),
+          );
         },
       );
     });
