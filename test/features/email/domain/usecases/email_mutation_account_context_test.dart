@@ -5,6 +5,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:jmap_dart_client/jmap/account_id.dart';
 import 'package:jmap_dart_client/jmap/core/error/set_error.dart';
 import 'package:jmap_dart_client/jmap/core/id.dart';
+import 'package:jmap_dart_client/jmap/core/capability/capability_identifier.dart';
 import 'package:jmap_dart_client/jmap/mail/email/email.dart';
 import 'package:jmap_dart_client/jmap/mail/mailbox/mailbox.dart';
 import 'package:mockito/mockito.dart';
@@ -12,6 +13,7 @@ import 'package:model/email/email_action_type.dart';
 import 'package:model/email/mark_star_action.dart';
 import 'package:model/email/read_actions.dart';
 import 'package:tmail_ui_user/features/email/domain/model/mark_read_action.dart';
+import 'package:tmail_ui_user/features/email/domain/model/email_mutation_context.dart';
 import 'package:tmail_ui_user/features/email/domain/model/move_action.dart';
 import 'package:tmail_ui_user/features/email/domain/model/move_to_mailbox_request.dart';
 import 'package:tmail_ui_user/features/email/domain/state/delete_email_permanently_state.dart';
@@ -37,6 +39,8 @@ import 'get_email_content_interactor_test.mocks.dart';
 
 void main() {
   final session = SessionFixtures.aliceSession;
+  EmailMutationContext contextFor(AccountId accountId) =>
+      EmailMutationContext.fromOperation(session, accountId);
   final primaryAccountId = AccountFixtures.aliceAccountId;
   final delegatedAccountId = AccountId(Id('delegated-account'));
   final emailId1 = EmailId(Id('email-1'));
@@ -65,6 +69,17 @@ void main() {
         .single;
   }
 
+  Future<T> failureOf<T extends Failure>(
+    Stream<Either<Failure, Success>> stream,
+  ) async {
+    final emissions = await stream.toList();
+    return emissions
+        .whereType<Left<Failure, Success>>()
+        .map((left) => left.value)
+        .whereType<T>()
+        .single;
+  }
+
   MoveToMailboxRequest moveRequest(List<EmailId> emailIds) =>
       MoveToMailboxRequest(
         {sourceMailboxId: emailIds},
@@ -79,7 +94,7 @@ void main() {
 
   final mutationCases = <({
     String name,
-    Future<AccountId> Function(AccountId accountId) run,
+     Future<EmailMutationContext> Function(AccountId accountId) run,
   })>[
     (
       name: 'single move success',
@@ -98,7 +113,7 @@ void main() {
         expect(success.currentMailboxId, sourceMailboxId);
         expect(success.destinationMailboxId, destinationMailboxId);
         verify(repository.moveToMailbox(session, accountId, request)).called(1);
-        return success.accountId;
+        return success.context;
       },
     ),
     (
@@ -115,7 +130,7 @@ void main() {
             {emailId1: false, emailId2: true},
           ),
         );
-        return success.accountId;
+        return success.context;
       },
     ),
     (
@@ -134,7 +149,7 @@ void main() {
           ),
         );
         expect(success.movedListEmailId, [emailId2]);
-        return success.accountId;
+        return success.context;
       },
     ),
     (
@@ -157,7 +172,7 @@ void main() {
             sourceMailboxId,
           ),
         );
-        return success.accountId;
+        return success.context;
       },
     ),
     (
@@ -178,7 +193,7 @@ void main() {
             {sourceMailboxId: bulkEmailIds},
           ),
         );
-        return success.accountId;
+        return success.context;
       },
     ),
     (
@@ -201,7 +216,7 @@ void main() {
           ),
         );
         expect(success.successEmailIds, [emailId1]);
-        return success.accountId;
+        return success.context;
       },
     ),
     (
@@ -222,7 +237,7 @@ void main() {
             MarkStarAction.markStar,
           ),
         );
-        return success.accountId;
+        return success.context;
       },
     ),
     (
@@ -242,7 +257,7 @@ void main() {
             MarkStarAction.markStar,
           ),
         );
-        return success.accountId;
+        return success.context;
       },
     ),
     (
@@ -264,7 +279,7 @@ void main() {
           ),
         );
         expect(success.successEmailIds, [emailId2]);
-        return success.accountId;
+        return success.context;
       },
     ),
     (
@@ -283,7 +298,7 @@ void main() {
             sourceMailboxId,
           ),
         );
-        return success.accountId;
+        return success.context;
       },
     ),
     (
@@ -303,7 +318,7 @@ void main() {
             sourceMailboxId,
           ),
         );
-        return success.accountId;
+        return success.context;
       },
     ),
     (
@@ -324,7 +339,7 @@ void main() {
           ),
         );
         expect(success.emailIds, [emailId1]);
-        return success.accountId;
+        return success.context;
       },
     ),
   ];
@@ -337,12 +352,241 @@ void main() {
       test(
         '${accountCase.name}: ${mutationCase.name} preserves exact input',
         () async {
+          final context = await mutationCase.run(accountCase.accountId);
+          expect(context.accountId, accountCase.accountId);
+          expect(context.session, same(session));
           expect(
-            await mutationCase.run(accountCase.accountId),
-            accountCase.accountId,
+            context.primaryAccountId,
+            session.primaryAccounts[CapabilityIdentifier.jmapMail],
           );
         },
       );
+    }
+  }
+
+  final failureCases = <({
+    String name,
+    bool hasRepositoryFailureBranch,
+    Type Function(bool throws) expectedType,
+    Future<Failure> Function(AccountId accountId, bool throws) run,
+  })>[
+    (
+      name: 'single read',
+      hasRepositoryFailureBranch: true,
+      expectedType: (_) => ContextualMarkAsEmailReadFailure,
+      run: (accountId, throws) async {
+        when(repository.markAsRead(
+          session,
+          accountId,
+          [emailId1],
+          ReadActions.markAsRead,
+        )).thenAnswer((_) async {
+          if (throws) throw StateError('read failure');
+          return resultWith([]);
+        });
+        return failureOf<Failure>(
+          MarkAsEmailReadInteractor(repository).execute(
+            session,
+            accountId,
+            emailId1,
+            ReadActions.markAsRead,
+            MarkReadAction.tap,
+            sourceMailboxId,
+          ),
+        );
+      },
+    ),
+    (
+      name: 'single star',
+      hasRepositoryFailureBranch: false,
+      expectedType: (_) => ContextualMarkAsStarEmailFailure,
+      run: (accountId, throws) async {
+        when(repository.markAsStar(
+          session,
+          accountId,
+          [emailId1],
+          MarkStarAction.markStar,
+        )).thenAnswer((_) async {
+          if (throws) throw StateError('star failure');
+          return resultWith([]);
+        });
+        return failureOf<Failure>(
+          MarkAsStarEmailInteractor(repository).execute(
+            session,
+            accountId,
+            emailId1,
+            MarkStarAction.markStar,
+          ),
+        );
+      },
+    ),
+    (
+      name: 'single move',
+      hasRepositoryFailureBranch: true,
+      expectedType: (_) => ContextualMoveToMailboxFailure,
+      run: (accountId, throws) async {
+        final request = moveRequest([emailId1]);
+        when(repository.moveToMailbox(session, accountId, request))
+            .thenAnswer((_) async {
+          if (throws) throw StateError('move failure');
+          return resultWith([]);
+        });
+        return failureOf<Failure>(
+          MoveToMailboxInteractor(repository).execute(
+            session,
+            accountId,
+            request,
+            {emailId1: false},
+          ),
+        );
+      },
+    ),
+    (
+      name: 'single permanent delete',
+      hasRepositoryFailureBranch: true,
+      expectedType: (_) => ContextualDeleteEmailPermanentlyFailure,
+      run: (accountId, throws) async {
+        when(repository.deleteEmailPermanently(session, accountId, emailId1))
+            .thenAnswer((_) async {
+          if (throws) throw StateError('delete failure');
+          return false;
+        });
+        return failureOf<Failure>(
+          DeleteEmailPermanentlyInteractor(repository).execute(
+            session,
+            accountId,
+            emailId1,
+            sourceMailboxId,
+          ),
+        );
+      },
+    ),
+    (
+      name: 'bulk read',
+      hasRepositoryFailureBranch: true,
+      expectedType: (throws) => throws
+          ? ContextualMarkAsMultipleEmailReadFailure
+          : ContextualMarkAsMultipleEmailReadAllFailure,
+      run: (accountId, throws) async {
+        when(repository.markAsRead(
+          session,
+          accountId,
+          bulkEmailIds,
+          ReadActions.markAsRead,
+        )).thenAnswer((_) async {
+          if (throws) throw StateError('bulk read failure');
+          return resultWith([]);
+        });
+        return failureOf<Failure>(
+          MarkAsMultipleEmailReadInteractor(repository).execute(
+            session,
+            accountId,
+            bulkEmailIds,
+            ReadActions.markAsRead,
+            {sourceMailboxId: bulkEmailIds},
+          ),
+        );
+      },
+    ),
+    (
+      name: 'bulk star',
+      hasRepositoryFailureBranch: true,
+      expectedType: (throws) => throws
+          ? ContextualMarkAsStarMultipleEmailFailure
+          : ContextualMarkAsStarMultipleEmailAllFailure,
+      run: (accountId, throws) async {
+        when(repository.markAsStar(
+          session,
+          accountId,
+          bulkEmailIds,
+          MarkStarAction.markStar,
+        )).thenAnswer((_) async {
+          if (throws) throw StateError('bulk star failure');
+          return resultWith([]);
+        });
+        return failureOf<Failure>(
+          MarkAsStarMultipleEmailInteractor(repository).execute(
+            session,
+            accountId,
+            bulkEmailIds,
+            MarkStarAction.markStar,
+          ),
+        );
+      },
+    ),
+    (
+      name: 'bulk move',
+      hasRepositoryFailureBranch: true,
+      expectedType: (throws) => throws
+          ? ContextualMoveMultipleEmailToMailboxFailure
+          : ContextualMoveMultipleEmailToMailboxAllFailure,
+      run: (accountId, throws) async {
+        final request = moveRequest(bulkEmailIds);
+        when(repository.moveToMailbox(session, accountId, request))
+            .thenAnswer((_) async {
+          if (throws) throw StateError('bulk move failure');
+          return resultWith([]);
+        });
+        return failureOf<Failure>(
+          MoveMultipleEmailToMailboxInteractor(repository).execute(
+            session,
+            accountId,
+            request,
+            {emailId1: false, emailId2: true},
+          ),
+        );
+      },
+    ),
+    (
+      name: 'bulk permanent delete',
+      hasRepositoryFailureBranch: true,
+      expectedType: (throws) => throws
+          ? ContextualDeleteMultipleEmailsPermanentlyFailure
+          : ContextualDeleteMultipleEmailsPermanentlyAllFailure,
+      run: (accountId, throws) async {
+        when(repository.deleteMultipleEmailsPermanently(
+          session,
+          accountId,
+          bulkEmailIds,
+        )).thenAnswer((_) async {
+          if (throws) throw StateError('bulk delete failure');
+          return resultWith([]);
+        });
+        return failureOf<Failure>(
+          DeleteMultipleEmailsPermanentlyInteractor(repository).execute(
+            session,
+            accountId,
+            bulkEmailIds,
+            sourceMailboxId,
+          ),
+        );
+      },
+    ),
+  ];
+
+  for (final accountCase in [
+    (name: 'primary account', accountId: primaryAccountId),
+    (name: 'delegated account', accountId: delegatedAccountId),
+  ]) {
+    for (final failureCase in failureCases) {
+      for (final throws in failureCase.hasRepositoryFailureBranch
+          ? [false, true]
+          : [true]) {
+        test(
+          '${accountCase.name}: ${failureCase.name} ${throws ? 'exception' : 'repository failure'} preserves context',
+          () async {
+            final failure = await failureCase.run(accountCase.accountId, throws);
+            expect(failure.runtimeType, failureCase.expectedType(throws));
+            final context = (failure as dynamic).context as EmailMutationContext;
+            expect(context.session, same(session));
+            expect(context.accountId, accountCase.accountId);
+            expect(
+              context.primaryAccountId,
+              session.primaryAccounts[CapabilityIdentifier.jmapMail],
+            );
+          },
+        );
+      }
     }
   }
 
@@ -365,7 +609,7 @@ void main() {
         destinationMailboxId,
         MoveAction.moving,
         EmailActionType.moveToMailbox,
-        accountId: accountId,
+         context: contextFor(accountId),
         originalMailboxIdsWithEmailIds: originalMailboxIdsWithEmailIds,
         emailIdsWithReadStatus: emailIdsWithReadStatus,
       ),
@@ -377,7 +621,7 @@ void main() {
         destinationMailboxId,
         MoveAction.moving,
         EmailActionType.moveToMailbox,
-        accountId: accountId,
+         context: contextFor(accountId),
         originalMailboxIdsWithEmailIds: originalMailboxIdsWithEmailIds,
         emailIdsWithReadStatus: emailIdsWithReadStatus,
       ),
@@ -389,7 +633,7 @@ void main() {
         destinationMailboxId,
         MoveAction.moving,
         EmailActionType.moveToMailbox,
-        accountId: accountId,
+         context: contextFor(accountId),
         originalMailboxIdsWithMoveSucceededEmailIds:
             originalMailboxIdsWithEmailIds,
         moveSucceededEmailIdsWithReadStatus: emailIdsWithReadStatus,
@@ -402,7 +646,7 @@ void main() {
         ReadActions.markAsRead,
         MarkReadAction.tap,
         sourceMailboxId,
-        accountId: accountId,
+         context: contextFor(accountId),
       ),
     ),
     (
@@ -411,7 +655,7 @@ void main() {
         [emailId1],
         ReadActions.markAsRead,
         markSuccessEmailIdsByMailboxId,
-        accountId: accountId,
+         context: contextFor(accountId),
       ),
     ),
     (
@@ -420,7 +664,7 @@ void main() {
         [emailId1],
         ReadActions.markAsRead,
         markSuccessEmailIdsByMailboxId,
-        accountId: accountId,
+         context: contextFor(accountId),
       ),
     ),
     (
@@ -428,7 +672,7 @@ void main() {
       build: (accountId) => MarkAsStarEmailSuccess(
         MarkStarAction.markStar,
         emailId1,
-        accountId: accountId,
+         context: contextFor(accountId),
       ),
     ),
     (
@@ -437,7 +681,7 @@ void main() {
         1,
         MarkStarAction.markStar,
         [emailId1],
-        accountId: accountId,
+         context: contextFor(accountId),
       ),
     ),
     (
@@ -446,7 +690,7 @@ void main() {
         1,
         MarkStarAction.markStar,
         [emailId1],
-        accountId: accountId,
+         context: contextFor(accountId),
       ),
     ),
     (
@@ -454,7 +698,7 @@ void main() {
       build: (accountId) => DeleteEmailPermanentlySuccess(
         emailId1,
         sourceMailboxId,
-        accountId: accountId,
+         context: contextFor(accountId),
       ),
     ),
     (
@@ -462,7 +706,7 @@ void main() {
       build: (accountId) => DeleteMultipleEmailsPermanentlyAllSuccess(
         [emailId1],
         sourceMailboxId,
-        accountId: accountId,
+         context: contextFor(accountId),
       ),
     ),
     (
@@ -471,7 +715,7 @@ void main() {
           DeleteMultipleEmailsPermanentlyHasSomeEmailFailure(
         [emailId1],
         sourceMailboxId,
-        accountId: accountId,
+         context: contextFor(accountId),
       ),
     ),
   ];
@@ -481,8 +725,8 @@ void main() {
       final primaryState = stateCase.build(primaryAccountId);
       final delegatedState = stateCase.build(delegatedAccountId);
 
-      expect(primaryState.props, contains(primaryAccountId));
-      expect(delegatedState.props, contains(delegatedAccountId));
+       expect((primaryState as dynamic).context.accountId, primaryAccountId);
+       expect((delegatedState as dynamic).context.accountId, delegatedAccountId);
       expect(primaryState, stateCase.build(primaryAccountId));
       expect(primaryState.hashCode, stateCase.build(primaryAccountId).hashCode);
       expect(primaryState, isNot(delegatedState));

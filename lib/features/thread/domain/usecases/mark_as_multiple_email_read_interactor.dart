@@ -7,6 +7,7 @@ import 'package:jmap_dart_client/jmap/mail/email/email.dart';
 import 'package:jmap_dart_client/jmap/mail/mailbox/mailbox.dart';
 import 'package:model/model.dart';
 import 'package:tmail_ui_user/features/email/domain/repository/email_repository.dart';
+import 'package:tmail_ui_user/features/email/domain/model/email_mutation_context.dart';
 import 'package:tmail_ui_user/features/thread/domain/state/mark_as_multiple_email_read_state.dart';
 
 class MarkAsMultipleEmailReadInteractor {
@@ -21,6 +22,7 @@ class MarkAsMultipleEmailReadInteractor {
     ReadActions readAction,
     Map<MailboxId, List<EmailId>> emailIdsByMailboxId,
   ) async* {
+    final context = EmailMutationContext.fromOperation(session, accountId);
     try {
       yield Right(LoadingMarkAsMultipleEmailReadAll());
 
@@ -42,20 +44,23 @@ class MarkAsMultipleEmailReadInteractor {
           result.emailIdsSuccess,
           readAction,
           markSuccessEmailIdsByMailboxId,
-          accountId: accountId,
+          context: context,
         ));
       } else if (result.emailIdsSuccess.isEmpty) {
-        yield Left(MarkAsMultipleEmailReadAllFailure(readAction));
+        yield Left(ContextualMarkAsMultipleEmailReadAllFailure(
+          context,
+          readAction,
+        ));
       } else {
         yield Right(MarkAsMultipleEmailReadHasSomeEmailFailure(
           result.emailIdsSuccess,
           readAction,
           markSuccessEmailIdsByMailboxId,
-          accountId: accountId,
+          context: context,
         ));
       }
     } catch (e) {
-      yield Left(MarkAsMultipleEmailReadFailure(readAction, e));
+      yield Left(ContextualMarkAsMultipleEmailReadFailure(context, readAction, e));
     }
   }
 }

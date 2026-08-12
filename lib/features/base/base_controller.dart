@@ -21,6 +21,7 @@ import 'package:tmail_ui_user/features/base/extensions/handle_company_server_log
 import 'package:tmail_ui_user/features/base/mixin/logout_mixin.dart';
 import 'package:tmail_ui_user/features/base/mixin/popup_context_menu_action_mixin.dart';
 import 'package:tmail_ui_user/features/caching/caching_manager.dart';
+import 'package:tmail_ui_user/features/email/domain/model/email_mutation_context.dart';
 import 'package:tmail_ui_user/features/email/presentation/bindings/mdn_interactor_bindings.dart';
 import 'package:tmail_ui_user/features/home/domain/extensions/session_extensions.dart';
 import 'package:tmail_ui_user/features/login/data/network/config/oidc_constant.dart';
@@ -90,6 +91,31 @@ abstract class BaseController extends GetxController
   final TwakeAppManager twakeAppManager = Get.find<TwakeAppManager>();
 
   bool _isFcmEnabled = false;
+  bool _emailMutationControllerClosed = false;
+
+  bool get isEmailMutationControllerAlive =>
+      !_emailMutationControllerClosed && !isClosed;
+
+  bool isCurrentEmailMutation(
+    EmailMutationContext context,
+    Session? currentSession,
+  ) {
+    if (!isEmailMutationControllerAlive ||
+        currentSession == null ||
+        !identical(context.session, currentSession)) {
+      return false;
+    }
+
+    if (currentSession.primaryAccounts[CapabilityIdentifier.jmapMail] !=
+        context.primaryAccountId) {
+      return false;
+    }
+
+    return CapabilityIdentifier.jmapMail.isSupported(
+      currentSession,
+      context.accountId,
+    );
+  }
 
   GetStoredFirebaseRegistrationInteractor? _getStoredFirebaseRegistrationInteractor;
   DestroyFirebaseRegistrationInteractor? _destroyFirebaseRegistrationInteractor;
@@ -122,6 +148,7 @@ abstract class BaseController extends GetxController
 
   @override
   void onClose() {
+    _emailMutationControllerClosed = true;
     if (PlatformInfo.isWeb) {
       _onBeforeUnloadBrowserSubscription?.cancel();
       _onUnloadBrowserSubscription?.cancel();
@@ -142,11 +169,13 @@ abstract class BaseController extends GetxController
   }
 
   void onData(Either<Failure, Success> newState) {
+    if (!isEmailMutationControllerAlive) return;
     viewState.value = newState;
     viewState.value.fold(onDataFailureViewState, handleSuccessViewState);
   }
 
   void onError(dynamic error, StackTrace stackTrace) {
+    if (!isEmailMutationControllerAlive) return;
     logWarning('$runtimeType::onError():Error: $error | StackTrace: $stackTrace');
     final isUrgentException = validateUrgentException(error);
     if (isUrgentException) {

@@ -6,6 +6,7 @@ import 'package:jmap_dart_client/jmap/core/session/session.dart';
 import 'package:jmap_dart_client/jmap/mail/email/email.dart';
 import 'package:model/model.dart';
 import 'package:tmail_ui_user/features/email/domain/repository/email_repository.dart';
+import 'package:tmail_ui_user/features/email/domain/model/email_mutation_context.dart';
 import 'package:tmail_ui_user/features/email/domain/state/mark_as_email_star_state.dart';
 
 class MarkAsStarEmailInteractor {
@@ -19,6 +20,7 @@ class MarkAsStarEmailInteractor {
     EmailId emailId,
     MarkStarAction markStarAction,
   ) async* {
+    final context = EmailMutationContext.fromOperation(session, accountId);
     try {
       await emailRepository.markAsStar(
         session,
@@ -29,10 +31,14 @@ class MarkAsStarEmailInteractor {
       yield Right(MarkAsStarEmailSuccess(
         markStarAction,
         emailId,
-        accountId: accountId,
+        context: context,
       ));
     } catch (e) {
-      yield Left(MarkAsStarEmailFailure(markStarAction, exception: e));
+      yield Left(ContextualMarkAsStarEmailFailure(
+        context,
+        markStarAction,
+        exception: e,
+      ));
     }
   }
 }

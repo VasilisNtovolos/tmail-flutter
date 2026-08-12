@@ -260,8 +260,10 @@ class ThreadDetailController extends BaseController {
     } else if (success is GetEmailsByIdsSuccess) {
       handleGetEmailsByIdsSuccess(success);
     } else if (success is MarkAsEmailReadSuccess) {
+      if (!isCurrentEmailMutation(success.context, session)) return;
       markCollapsedEmailReadSuccess(success);
     } else if (success is MarkAsMultipleEmailReadAllSuccess) {
+      if (!isCurrentEmailMutation(success.context, session)) return;
       handleMarkMultipleEmailsReadSuccess(
         success,
         success.accountId,
@@ -269,6 +271,7 @@ class ThreadDetailController extends BaseController {
         success.emailIds,
       );
     } else if (success is MarkAsMultipleEmailReadHasSomeEmailFailure) {
+      if (!isCurrentEmailMutation(success.context, session)) return;
       handleMarkMultipleEmailsReadSuccess(
         success,
         success.accountId,
@@ -302,6 +305,14 @@ class ThreadDetailController extends BaseController {
       }
     } else if (failure is MarkAsMultipleEmailReadFailure ||
         failure is MarkAsStarMultipleEmailFailure) {
+      if (failure is ContextualMarkAsMultipleEmailReadFailure &&
+          !isCurrentEmailMutation(failure.context, session)) {
+        return;
+      }
+      if (failure is ContextualMarkAsStarMultipleEmailFailure &&
+          !isCurrentEmailMutation(failure.context, session)) {
+        return;
+      }
       toastManager.showMessageFailure(failure as FeatureFailure);
     } else if (failure is AddALabelToAThreadFailure) {
       handleAddLabelToThreadFailure(failure);

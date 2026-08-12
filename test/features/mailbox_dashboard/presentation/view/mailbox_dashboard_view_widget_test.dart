@@ -1,3 +1,7 @@
+import 'dart:async';
+
+import 'package:core/presentation/state/failure.dart';
+import 'package:core/presentation/state/success.dart';
 import 'package:core/data/network/config/dynamic_url_interceptors.dart';
 import 'package:core/data/network/download/download_manager.dart';
 import 'package:core/presentation/resources/image_paths.dart';
@@ -12,6 +16,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:get/get.dart';
 import 'package:jmap_dart_client/jmap/account_id.dart';
+import 'package:jmap_dart_client/jmap/core/capability/capability_identifier.dart';
 import 'package:jmap_dart_client/jmap/core/account/account.dart';
 import 'package:jmap_dart_client/jmap/core/id.dart';
 import 'package:jmap_dart_client/jmap/core/unsigned_int.dart';
@@ -38,6 +43,7 @@ import 'package:tmail_ui_user/features/composer/domain/usecases/send_email_inter
 import 'package:tmail_ui_user/features/composer/presentation/manager/composer_manager.dart';
 import 'package:tmail_ui_user/features/download/presentation/controllers/download_controller.dart';
 import 'package:tmail_ui_user/features/email/domain/model/mark_read_action.dart';
+import 'package:tmail_ui_user/features/email/domain/model/email_mutation_context.dart';
 import 'package:tmail_ui_user/features/email/domain/model/move_action.dart';
 import 'package:tmail_ui_user/features/email/domain/model/move_to_mailbox_request.dart';
 import 'package:tmail_ui_user/features/email/domain/state/delete_email_permanently_state.dart';
@@ -131,6 +137,8 @@ import 'package:tmail_ui_user/features/thread/domain/state/load_more_emails_stat
 import 'package:tmail_ui_user/features/thread/domain/state/mark_as_multiple_email_read_state.dart';
 import 'package:tmail_ui_user/features/thread/domain/state/mark_as_star_multiple_email_state.dart';
 import 'package:tmail_ui_user/features/thread/domain/state/move_multiple_email_to_mailbox_state.dart';
+import 'package:tmail_ui_user/features/thread_detail/domain/model/email_in_thread_detail_info.dart';
+import 'package:tmail_ui_user/features/thread_detail/presentation/extension/on_thread_detail_action_click.dart';
 import 'package:tmail_ui_user/features/thread/domain/usecases/clean_and_get_emails_in_mailbox_interactor.dart';
 import 'package:tmail_ui_user/features/thread/domain/usecases/empty_spam_folder_interactor.dart';
 import 'package:tmail_ui_user/features/thread/domain/usecases/get_email_by_id_interactor.dart';
@@ -1209,11 +1217,11 @@ void main() {
           baseSession.capabilities,
           {
             ...baseSession.accounts,
-            delegatedAccountId: Account(
+          delegatedAccountId: Account(
               AccountName('delegate@domain.tld'),
               false,
               false,
-              primaryAccount.accountCapabilities,
+              {...primaryAccount.accountCapabilities},
             ),
           },
           baseSession.primaryAccounts,
@@ -1399,6 +1407,11 @@ void main() {
       final sameEmailId = EmailId(Id('batch-2a-same-email'));
       final secondEmailId = EmailId(Id('batch-2a-second-email'));
       final untouchedEmailId = EmailId(Id('batch-2a-untouched-email'));
+      EmailMutationContext contextFor(AccountId accountId) =>
+          EmailMutationContext.fromOperation(
+            mailboxDashboardController.sessionCurrent!,
+            accountId,
+          );
 
       PresentationMailbox makeMailbox(
         AccountId accountId,
@@ -1494,10 +1507,10 @@ void main() {
               AccountName('batch-2a-delegate@domain.tld'),
               false,
               false,
-              primaryAccount.accountCapabilities,
+              {...primaryAccount.accountCapabilities},
             ),
           },
-          baseSession.primaryAccounts,
+          {...baseSession.primaryAccounts},
           baseSession.username,
           baseSession.apiUrl,
           baseSession.downloadUrl,
@@ -1639,7 +1652,7 @@ void main() {
                 destinationMailboxId,
                 MoveAction.moving,
                 EmailActionType.moveToMailbox,
-                accountId: delegatedAccountId,
+                context: contextFor(delegatedAccountId),
                 originalMailboxIdsWithEmailIds: {
                   sourceMailboxId: [sameEmailId],
                 },
@@ -1672,7 +1685,7 @@ void main() {
               destinationMailboxId,
               MoveAction.moving,
               EmailActionType.moveToMailbox,
-              accountId: primaryAccountId,
+              context: contextFor(primaryAccountId),
               originalMailboxIdsWithEmailIds: {
                 sourceMailboxId: [sameEmailId],
               },
@@ -1705,7 +1718,7 @@ void main() {
               ReadActions.markAsRead,
               MarkReadAction.tap,
               sourceMailboxId,
-              accountId: delegatedAccountId,
+              context: contextFor(delegatedAccountId),
             ),
           ),
         );
@@ -1732,7 +1745,7 @@ void main() {
               DeleteEmailPermanentlySuccess(
                 sameEmailId,
                 sourceMailboxId,
-                accountId: delegatedAccountId,
+                context: contextFor(delegatedAccountId),
               ),
             ),
           );
@@ -1759,7 +1772,7 @@ void main() {
               ReadActions.markAsRead,
               MarkReadAction.tap,
               sourceMailboxId,
-              accountId: delegatedAccountId,
+              context: contextFor(delegatedAccountId),
             ),
           ),
         );
@@ -1784,7 +1797,7 @@ void main() {
             MarkAsStarEmailSuccess(
               MarkStarAction.markStar,
               sameEmailId,
-              accountId: delegatedAccountId,
+              context: contextFor(delegatedAccountId),
             ),
           ),
         );
@@ -1809,7 +1822,7 @@ void main() {
             DeleteEmailPermanentlySuccess(
               sameEmailId,
               sourceMailboxId,
-              accountId: delegatedAccountId,
+              context: contextFor(delegatedAccountId),
             ),
           ),
         );
@@ -1838,7 +1851,7 @@ void main() {
               2,
               MarkStarAction.markStar,
               [sameEmailId, secondEmailId],
-              accountId: delegatedAccountId,
+              context: contextFor(delegatedAccountId),
             ),
           ),
         );
@@ -1871,7 +1884,7 @@ void main() {
                 {
                   sourceMailboxId: [sameEmailId],
                 },
-                accountId: delegatedAccountId,
+                context: contextFor(delegatedAccountId),
               ),
             ),
           );
@@ -1906,7 +1919,7 @@ void main() {
                 destinationMailboxId,
                 MoveAction.moving,
                 EmailActionType.moveToMailbox,
-                accountId: delegatedAccountId,
+                context: contextFor(delegatedAccountId),
                 originalMailboxIdsWithEmailIds: {
                   sourceMailboxId: [sameEmailId],
                 },
@@ -1968,7 +1981,7 @@ void main() {
                       ReadActions.markAsRead,
                       MarkReadAction.tap,
                       sourceMailboxId,
-                      accountId: dispatchedAccountId,
+                       context: contextFor(dispatchedAccountId),
                     ),
                   ),
                 );
@@ -2027,7 +2040,7 @@ void main() {
                     MarkAsStarEmailSuccess(
                       MarkStarAction.markStar,
                       sameEmailId,
-                      accountId: dispatchedAccountId,
+                       context: contextFor(dispatchedAccountId),
                     ),
                   ),
                 );
@@ -2091,7 +2104,7 @@ void main() {
                     DeleteEmailPermanentlySuccess(
                       sameEmailId,
                       sourceMailboxId,
-                      accountId: dispatchedAccountId,
+                       context: contextFor(dispatchedAccountId),
                     ),
                   ),
                 );
@@ -2161,7 +2174,7 @@ void main() {
                     DeleteMultipleEmailsPermanentlyHasSomeEmailFailure(
                       [sameEmailId, secondEmailId],
                       sourceMailboxId,
-                      accountId: dispatchedAccountId,
+                       context: contextFor(dispatchedAccountId),
                     ),
                   ),
                 );
@@ -2248,7 +2261,7 @@ void main() {
                       dispatchedRequest.destinationMailboxId,
                       dispatchedRequest.moveAction,
                       dispatchedRequest.emailActionType,
-                      accountId: dispatchedAccountId,
+                       context: contextFor(dispatchedAccountId),
                       originalMailboxIdsWithEmailIds:
                           dispatchedRequest.currentMailboxes,
                       emailIdsWithReadStatus: emailIdsWithReadStatus,
@@ -2342,7 +2355,7 @@ void main() {
                       {
                         sourceMailboxId: [sameEmailId],
                       },
-                      accountId: dispatchedAccountId,
+                       context: contextFor(dispatchedAccountId),
                     ),
                   ),
                 );
@@ -2422,7 +2435,7 @@ void main() {
                       ReadActions.markAsRead,
                       MarkReadAction.tap,
                       sourceMailboxId,
-                      accountId: dispatchedAccountId,
+                       context: contextFor(dispatchedAccountId),
                     ),
                   ),
                 );
@@ -2497,7 +2510,7 @@ void main() {
                     MarkAsStarEmailSuccess(
                       MarkStarAction.markStar,
                       sameEmailId,
-                      accountId: dispatchedAccountId,
+                       context: contextFor(dispatchedAccountId),
                     ),
                   ),
                 );
@@ -2573,7 +2586,7 @@ void main() {
                       request.destinationMailboxId,
                       request.moveAction,
                       request.emailActionType,
-                      accountId: dispatchedAccountId,
+                       context: contextFor(dispatchedAccountId),
                       originalMailboxIdsWithEmailIds: request.currentMailboxes,
                       emailIdsWithReadStatus: const {},
                     ),
@@ -2647,7 +2660,7 @@ void main() {
                       ReadActions.markAsRead,
                       MarkReadAction.tap,
                       sourceMailboxId,
-                      accountId: dispatchedAccountId,
+                       context: contextFor(dispatchedAccountId),
                     ),
                   ),
                 );
@@ -2702,7 +2715,7 @@ void main() {
                       ReadActions.markAsRead,
                       MarkReadAction.tap,
                       sourceMailboxId,
-                      accountId: dispatchedAccountId,
+                       context: contextFor(dispatchedAccountId),
                     ),
                   ),
                 );
@@ -2748,7 +2761,7 @@ void main() {
                     destinationMailboxId,
                     MoveAction.moving,
                     EmailActionType.moveToMailbox,
-                    accountId: delegatedAccountId,
+                    context: contextFor(delegatedAccountId),
                     originalMailboxIdsWithEmailIds: {
                       sourceMailboxId: [sameEmailId],
                     },
@@ -2791,7 +2804,7 @@ void main() {
                   ReadActions.markAsRead,
                   MarkReadAction.tap,
                   sourceMailboxId,
-                  accountId: delegatedAccountId,
+                  context: contextFor(delegatedAccountId),
                 ),
               ),
             );
@@ -2825,7 +2838,7 @@ void main() {
                 MarkAsStarEmailSuccess(
                   MarkStarAction.markStar,
                   sameEmailId,
-                  accountId: delegatedAccountId,
+                  context: contextFor(delegatedAccountId),
                 ),
               ),
             );
@@ -2861,7 +2874,7 @@ void main() {
                   ReadActions.markAsRead,
                   MarkReadAction.tap,
                   sourceMailboxId,
-                  accountId: primaryAccountId,
+                  context: contextFor(primaryAccountId),
                 ),
               ),
             );
@@ -2909,7 +2922,7 @@ void main() {
                   destinationMailboxId,
                   MoveAction.moving,
                   EmailActionType.moveToMailbox,
-                  accountId: primaryAccountId,
+                  context: contextFor(primaryAccountId),
                   originalMailboxIdsWithEmailIds: {
                     sourceMailboxId: [sameEmailId],
                   },
@@ -2973,7 +2986,7 @@ void main() {
                   destinationMailboxId,
                   MoveAction.moving,
                   EmailActionType.moveToMailbox,
-                  accountId: primaryAccountId,
+                  context: contextFor(primaryAccountId),
                   originalMailboxIdsWithEmailIds: {
                     sourceMailboxId: [sameEmailId, secondEmailId],
                   },
@@ -3047,7 +3060,7 @@ void main() {
                   destinationMailboxId,
                   MoveAction.moving,
                   EmailActionType.moveToMailbox,
-                  accountId: primaryAccountId,
+                  context: contextFor(primaryAccountId),
                   originalMailboxIdsWithMoveSucceededEmailIds: {
                     sourceMailboxId: [sameEmailId],
                   },
@@ -3102,7 +3115,7 @@ void main() {
                 destinationMailboxId,
                 MoveAction.moving,
                 EmailActionType.moveToMailbox,
-                accountId: delegatedAccountId,
+                context: contextFor(delegatedAccountId),
                 originalMailboxIdsWithEmailIds: {
                   sourceMailboxId: [sameEmailId],
                 },
@@ -3159,7 +3172,7 @@ void main() {
                 destinationMailboxId,
                 MoveAction.moving,
                 EmailActionType.moveToMailbox,
-                accountId: delegatedAccountId,
+                context: contextFor(delegatedAccountId),
                 originalMailboxIdsWithMoveSucceededEmailIds: {
                   sourceMailboxId: [sameEmailId],
                 },
@@ -3214,7 +3227,7 @@ void main() {
                 destinationMailboxId,
                 MoveAction.moving,
                 EmailActionType.moveToMailbox,
-                accountId: delegatedAccountId,
+                context: contextFor(delegatedAccountId),
                 originalMailboxIdsWithEmailIds: {
                   sourceMailboxId: [sameEmailId],
                 },
@@ -3235,6 +3248,713 @@ void main() {
           verifyNever(
             moveToMailboxInteractor.execute(any, any, any, any),
           );
+        },
+      );
+
+      testWidgets(
+        'same-account Session replacement rejects a delayed completion',
+        (tester) async {
+          final sessionS1 = mailboxDashboardController.sessionCurrent!;
+          final mailbox = mailboxFor(primaryAccountId, sourceMailboxId);
+          final email = emailFor(mailbox, sameEmailId);
+          mailboxDashboardController.setSelectedMailbox(mailbox);
+          mailboxDashboardController.updateEmailList([email]);
+          final unreadBefore = unreadFor(primaryAccountId, sourceMailboxId);
+          clearInteractions(appToast);
+
+          mailboxDashboardController.sessionCurrent =
+              sessionWithDelegatedAccount();
+          mailboxDashboardController.onData(
+            Right(
+              MarkAsEmailReadSuccess(
+                sameEmailId,
+                ReadActions.markAsRead,
+                MarkReadAction.swipeOnThread,
+                sourceMailboxId,
+                context: EmailMutationContext.fromOperation(
+                  sessionS1,
+                  primaryAccountId,
+                ),
+              ),
+            ),
+          );
+
+          expect(email.hasRead, isFalse);
+          expect(unreadFor(primaryAccountId, sourceMailboxId), unreadBefore);
+          verifyNever(
+            appToast.showToastMessage(
+              any,
+              any,
+              actionName: anyNamed('actionName'),
+              onActionClick: anyNamed('onActionClick'),
+              actionIcon: anyNamed('actionIcon'),
+              leadingSVGIcon: anyNamed('leadingSVGIcon'),
+              leadingSVGIconColor: anyNamed('leadingSVGIconColor'),
+              backgroundColor: anyNamed('backgroundColor'),
+              textColor: anyNamed('textColor'),
+            ),
+          );
+        },
+      );
+
+      testWidgets(
+        'in-place primary replacement rejects a delayed completion',
+        (tester) async {
+          final session = mailboxDashboardController.sessionCurrent!;
+          final mailbox = mailboxFor(primaryAccountId, sourceMailboxId);
+          final email = emailFor(mailbox, sameEmailId);
+          mailboxDashboardController.setSelectedMailbox(mailbox);
+          mailboxDashboardController.updateEmailList([email]);
+          final context = EmailMutationContext.fromOperation(
+            session,
+            primaryAccountId,
+          );
+
+          session.primaryAccounts[CapabilityIdentifier.jmapMail] =
+              delegatedAccountId;
+          mailboxDashboardController.onData(
+            Right(
+              MarkAsStarEmailSuccess(
+                MarkStarAction.markStar,
+                sameEmailId,
+                context: context,
+              ),
+            ),
+          );
+
+          expect(email.hasStarred, isFalse);
+        },
+      );
+
+      testWidgets(
+        'same-account Session replacement suppresses handled failure feedback',
+        (tester) async {
+          final sessionS1 = mailboxDashboardController.sessionCurrent!;
+          await tester.pumpWidget(
+            makeTestableWidget(child: const SizedBox.shrink()),
+          );
+          await tester.pump();
+          clearInteractions(appToast);
+          mailboxDashboardController.sessionCurrent =
+              sessionWithDelegatedAccount();
+
+          mailboxDashboardController.onData(
+            Left(
+              ContextualMoveToMailboxFailure(
+                EmailMutationContext.fromOperation(
+                  sessionS1,
+                  primaryAccountId,
+                ),
+                EmailActionType.moveToMailbox,
+                exception: Exception('stale'),
+              ),
+            ),
+          );
+
+          verifyNever(appToast.showToastErrorMessage(any, any));
+        },
+      );
+
+      testWidgets(
+        'same-account Session replacement leaves Search and background projections unchanged',
+        (tester) async {
+          final primarySource = mailboxFor(primaryAccountId, sourceMailboxId);
+          final delegatedSource = mailboxFor(
+            delegatedAccountId,
+            sourceMailboxId,
+          );
+          final primaryEmail = emailFor(primarySource, sameEmailId);
+          final delegatedEmail = emailFor(delegatedSource, sameEmailId);
+          await preparePrimarySearchDispatch(
+            tester,
+            searchEmails: [primaryEmail],
+            backgroundEmails: [delegatedEmail],
+          );
+          final sessionS1 = mailboxDashboardController.sessionCurrent!;
+          final context = EmailMutationContext.fromOperation(
+            sessionS1,
+            primaryAccountId,
+          );
+          mailboxDashboardController.sessionCurrent =
+              sessionWithDelegatedAccount();
+
+          mailboxDashboardController.onData(
+            Right(
+              MoveToMailboxSuccess(
+                sameEmailId,
+                sourceMailboxId,
+                destinationMailboxId,
+                MoveAction.moving,
+                EmailActionType.moveToMailbox,
+                context: context,
+                originalMailboxIdsWithEmailIds: {
+                  sourceMailboxId: [sameEmailId],
+                },
+                emailIdsWithReadStatus: {sameEmailId: false},
+              ),
+            ),
+          );
+
+          expect(primaryEmail.mailboxContain, same(primarySource));
+          expect(delegatedEmail.mailboxContain, same(delegatedSource));
+          expect(mailboxDashboardController.listResultSearch, [same(primaryEmail)]);
+          expect(
+            mailboxDashboardController.emailsInCurrentMailbox,
+            [same(delegatedEmail)],
+          );
+        },
+      );
+
+      testWidgets(
+        'Undo rejects a replacement Session with the same account',
+        (tester) async {
+          final sessionS1 = mailboxDashboardController.sessionCurrent!;
+          mailboxDashboardController.setSelectedMailbox(
+            mailboxFor(primaryAccountId, sourceMailboxId),
+          );
+          await tester.pumpWidget(
+            makeTestableWidget(child: const SizedBox.shrink()),
+          );
+          await tester.pump();
+          clearInteractions(appToast);
+
+          mailboxDashboardController.onData(
+            Right(
+              MoveToMailboxSuccess(
+                sameEmailId,
+                sourceMailboxId,
+                destinationMailboxId,
+                MoveAction.moving,
+                EmailActionType.moveToMailbox,
+                context: EmailMutationContext.fromOperation(
+                  sessionS1,
+                  primaryAccountId,
+                ),
+                originalMailboxIdsWithEmailIds: {
+                  sourceMailboxId: [sameEmailId],
+                },
+                emailIdsWithReadStatus: {sameEmailId: false},
+              ),
+            ),
+          );
+          final undoCallback = captureUndoCallback();
+          clearInteractions(moveToMailboxInteractor);
+          mailboxDashboardController.sessionCurrent =
+              sessionWithDelegatedAccount();
+          undoCallback();
+
+          verifyNever(
+            moveToMailboxInteractor.execute(any, any, any, any),
+          );
+        },
+      );
+
+      testWidgets(
+        'null primary remains valid until a primary account is introduced',
+        (tester) async {
+          final session = mailboxDashboardController.sessionCurrent!;
+          session.primaryAccounts.remove(CapabilityIdentifier.jmapMail);
+          final mailbox = mailboxFor(delegatedAccountId, sourceMailboxId);
+          final email = emailFor(mailbox, sameEmailId);
+          mailboxDashboardController.setSelectedMailbox(mailbox);
+          mailboxDashboardController.updateEmailList([email]);
+          final context = EmailMutationContext.fromOperation(
+            session,
+            delegatedAccountId,
+          );
+
+          mailboxDashboardController.onData(
+            Right(
+              MarkAsStarEmailSuccess(
+                MarkStarAction.markStar,
+                sameEmailId,
+                context: context,
+              ),
+            ),
+          );
+          expect(email.hasStarred, isTrue);
+
+          email.keywords?.remove(KeyWordIdentifier.emailFlagged);
+          session.primaryAccounts[CapabilityIdentifier.jmapMail] =
+              primaryAccountId;
+          mailboxDashboardController.onData(
+            Right(
+              MarkAsStarEmailSuccess(
+                MarkStarAction.markStar,
+                sameEmailId,
+                context: context,
+              ),
+            ),
+          );
+          expect(email.hasStarred, isFalse);
+        },
+      );
+
+      testWidgets(
+        'account capability loss rejects a delayed completion',
+        (tester) async {
+          final session = mailboxDashboardController.sessionCurrent!;
+          final mailbox = mailboxFor(delegatedAccountId, sourceMailboxId);
+          final email = emailFor(mailbox, sameEmailId);
+          mailboxDashboardController.setSelectedMailbox(mailbox);
+          mailboxDashboardController.updateEmailList([email]);
+          final context = EmailMutationContext.fromOperation(
+            session,
+            delegatedAccountId,
+          );
+          session.accounts[delegatedAccountId]!
+              .accountCapabilities
+              .remove(CapabilityIdentifier.jmapMail);
+
+          mailboxDashboardController.onData(
+            Right(
+              MarkAsEmailReadSuccess(
+                sameEmailId,
+                ReadActions.markAsRead,
+                MarkReadAction.tap,
+                sourceMailboxId,
+                context: context,
+              ),
+            ),
+          );
+
+          expect(email.hasRead, isFalse);
+        },
+      );
+
+      testWidgets(
+        'late success after real dashboard teardown is ignored',
+        (tester) async {
+          final stream = StreamController<Either<Failure, Success>>(
+            sync: true,
+          );
+          addTearDown(stream.close);
+          final mailbox = mailboxFor(primaryAccountId, sourceMailboxId);
+          final email = emailFor(mailbox, sameEmailId);
+          mailboxDashboardController.setSelectedMailbox(mailbox);
+          mailboxDashboardController.updateEmailList([email]);
+          final unreadBefore = unreadFor(primaryAccountId, sourceMailboxId);
+          when(
+            markAsEmailReadInteractor.execute(
+              any,
+              any,
+              any,
+              any,
+              any,
+              any,
+            ),
+          ).thenAnswer((_) => stream.stream);
+
+          mailboxDashboardController.markAsEmailRead(
+            sameEmailId,
+            ReadActions.markAsRead,
+            MarkReadAction.tap,
+            sourceMailboxId,
+          );
+          clearInteractions(appToast);
+          expect(await Get.delete<MailboxDashBoardController>(), isTrue);
+
+          stream.add(
+            Right(
+              MarkAsEmailReadSuccess(
+                sameEmailId,
+                ReadActions.markAsRead,
+                MarkReadAction.tap,
+                sourceMailboxId,
+                context: EmailMutationContext.fromOperation(
+                  SessionFixtures.aliceSession,
+                  primaryAccountId,
+                ),
+              ),
+            ),
+          );
+          await tester.pump();
+
+          expect(email.hasRead, isFalse);
+          expect(unreadFor(primaryAccountId, sourceMailboxId), unreadBefore);
+          verifyNever(
+            appToast.showToastMessage(
+              any,
+              any,
+              actionName: anyNamed('actionName'),
+              onActionClick: anyNamed('onActionClick'),
+              actionIcon: anyNamed('actionIcon'),
+              leadingSVGIcon: anyNamed('leadingSVGIcon'),
+              leadingSVGIconColor: anyNamed('leadingSVGIconColor'),
+              backgroundColor: anyNamed('backgroundColor'),
+              textColor: anyNamed('textColor'),
+            ),
+          );
+        },
+      );
+
+      testWidgets(
+        'late contextual failure after real dashboard teardown is ignored',
+        (tester) async {
+          final stream = StreamController<Either<Failure, Success>>(
+            sync: true,
+          );
+          addTearDown(stream.close);
+          final session = mailboxDashboardController.sessionCurrent!;
+          final request = MoveToMailboxRequest(
+            {
+              sourceMailboxId: [sameEmailId],
+            },
+            destinationMailboxId,
+            MoveAction.moving,
+            EmailActionType.moveToMailbox,
+          );
+          when(
+            moveToMailboxInteractor.execute(any, any, any, any),
+          ).thenAnswer((_) => stream.stream);
+
+          mailboxDashboardController.moveToMailbox(
+            session,
+            primaryAccountId,
+            request,
+            {sameEmailId: false},
+          );
+          clearInteractions(toastManager);
+          expect(await Get.delete<MailboxDashBoardController>(), isTrue);
+
+          stream.add(
+            Left(
+              ContextualMoveToMailboxFailure(
+                EmailMutationContext.fromOperation(session, primaryAccountId),
+                EmailActionType.moveToMailbox,
+                exception: Exception('late failure'),
+              ),
+            ),
+          );
+          await tester.pump();
+
+          verifyNever(toastManager.showMessageFailure(any));
+        },
+      );
+
+      testWidgets(
+        'captured Undo after real dashboard teardown does not dispatch',
+        (tester) async {
+          final stream = StreamController<Either<Failure, Success>>(
+            sync: true,
+          );
+          addTearDown(stream.close);
+          final session = mailboxDashboardController.sessionCurrent!;
+          final request = MoveToMailboxRequest(
+            {
+              sourceMailboxId: [sameEmailId],
+            },
+            destinationMailboxId,
+            MoveAction.moving,
+            EmailActionType.moveToMailbox,
+          );
+          when(
+            moveToMailboxInteractor.execute(any, any, any, any),
+          ).thenAnswer((_) => stream.stream);
+          await tester.pumpWidget(
+            makeTestableWidget(child: const SizedBox.shrink()),
+          );
+          await tester.pump();
+
+          mailboxDashboardController.moveToMailbox(
+            session,
+            primaryAccountId,
+            request,
+            {sameEmailId: false},
+          );
+          stream.add(
+            Right(
+              MoveToMailboxSuccess(
+                sameEmailId,
+                sourceMailboxId,
+                destinationMailboxId,
+                MoveAction.moving,
+                EmailActionType.moveToMailbox,
+                context: EmailMutationContext.fromOperation(
+                  session,
+                  primaryAccountId,
+                ),
+                originalMailboxIdsWithEmailIds: request.currentMailboxes,
+                emailIdsWithReadStatus: {sameEmailId: false},
+              ),
+            ),
+          );
+          await tester.pump();
+          final undoCallback = captureUndoCallback();
+          clearInteractions(moveToMailboxInteractor);
+
+          expect(await Get.delete<MailboxDashBoardController>(), isTrue);
+          undoCallback();
+
+          verifyNever(
+            moveToMailboxInteractor.execute(any, any, any, any),
+          );
+        },
+      );
+
+      testWidgets(
+        'bulk-all Undo rejects a replacement Session with the same account',
+        (tester) async {
+          final stream = StreamController<Either<Failure, Success>>(
+            sync: true,
+          );
+          addTearDown(stream.close);
+          final session = mailboxDashboardController.sessionCurrent!;
+          final request = MoveToMailboxRequest(
+            {
+              sourceMailboxId: [sameEmailId, secondEmailId],
+            },
+            destinationMailboxId,
+            MoveAction.moving,
+            EmailActionType.moveToMailbox,
+          );
+          when(
+            moveMultipleEmailToMailboxInteractor.execute(any, any, any, any),
+          ).thenAnswer((_) => stream.stream);
+          await tester.pumpWidget(
+            makeTestableWidget(child: const SizedBox.shrink()),
+          );
+          await tester.pump();
+
+          mailboxDashboardController.moveSelectedEmailMultipleToMailboxAction(
+            session,
+            primaryAccountId,
+            request,
+            {sameEmailId: false, secondEmailId: true},
+          );
+          stream.add(
+            Right(
+              MoveMultipleEmailToMailboxAllSuccess(
+                [sameEmailId, secondEmailId],
+                destinationMailboxId,
+                MoveAction.moving,
+                EmailActionType.moveToMailbox,
+                context: EmailMutationContext.fromOperation(
+                  session,
+                  primaryAccountId,
+                ),
+                originalMailboxIdsWithEmailIds: request.currentMailboxes,
+                emailIdsWithReadStatus: {
+                  sameEmailId: false,
+                  secondEmailId: true,
+                },
+              ),
+            ),
+          );
+          await tester.pump();
+          final undoCallback = captureUndoCallback();
+          clearInteractions(moveMultipleEmailToMailboxInteractor);
+          mailboxDashboardController.sessionCurrent =
+              sessionWithDelegatedAccount();
+          undoCallback();
+
+          verifyNever(
+            moveMultipleEmailToMailboxInteractor.execute(any, any, any, any),
+          );
+        },
+      );
+
+      testWidgets(
+        'partial-success Undo rejects a replacement Session with the same account',
+        (tester) async {
+          final stream = StreamController<Either<Failure, Success>>(
+            sync: true,
+          );
+          addTearDown(stream.close);
+          final session = mailboxDashboardController.sessionCurrent!;
+          final request = MoveToMailboxRequest(
+            {
+              sourceMailboxId: [sameEmailId, secondEmailId],
+            },
+            destinationMailboxId,
+            MoveAction.moving,
+            EmailActionType.moveToMailbox,
+          );
+          when(
+            moveMultipleEmailToMailboxInteractor.execute(any, any, any, any),
+          ).thenAnswer((_) => stream.stream);
+          await tester.pumpWidget(
+            makeTestableWidget(child: const SizedBox.shrink()),
+          );
+          await tester.pump();
+
+          mailboxDashboardController.moveSelectedEmailMultipleToMailboxAction(
+            session,
+            primaryAccountId,
+            request,
+            {sameEmailId: false, secondEmailId: true},
+          );
+          stream.add(
+            Right(
+              MoveMultipleEmailToMailboxHasSomeEmailFailure(
+                [sameEmailId],
+                destinationMailboxId,
+                MoveAction.moving,
+                EmailActionType.moveToMailbox,
+                context: EmailMutationContext.fromOperation(
+                  session,
+                  primaryAccountId,
+                ),
+                originalMailboxIdsWithMoveSucceededEmailIds: {
+                  sourceMailboxId: [sameEmailId],
+                },
+                moveSucceededEmailIdsWithReadStatus: {sameEmailId: false},
+              ),
+            ),
+          );
+          await tester.pump();
+          final undoCallback = captureUndoCallback();
+          clearInteractions(moveMultipleEmailToMailboxInteractor);
+          mailboxDashboardController.sessionCurrent =
+              sessionWithDelegatedAccount();
+          undoCallback();
+
+          verifyNever(
+            moveMultipleEmailToMailboxInteractor.execute(any, any, any, any),
+          );
+        },
+      );
+
+      testWidgets(
+        'stale Search-origin detail move leaves detail and projections unchanged',
+        (tester) async {
+          final primarySource = mailboxFor(primaryAccountId, sourceMailboxId);
+          final delegatedSource = mailboxFor(
+            delegatedAccountId,
+            sourceMailboxId,
+          );
+          final primarySearchEmail = emailFor(primarySource, sameEmailId);
+          final delegatedBackgroundEmail = emailFor(
+            delegatedSource,
+            sameEmailId,
+          );
+          final searchEmailController = await preparePrimarySearchDispatch(
+            tester,
+            searchEmails: [primarySearchEmail],
+            backgroundEmails: [delegatedBackgroundEmail],
+          );
+          mailboxDashboardController.openEmailDetailedView(primarySearchEmail);
+          final threadDetailController = registerThreadDetailController();
+          threadDetailController.emailIdsPresentation[sameEmailId] =
+              primarySearchEmail;
+          mailboxDashboardController.setMapDefaultMailboxIdByRole({
+            PresentationMailbox.roleTrash: destinationMailboxId,
+          });
+          final completion = StreamController<Either<Failure, Success>>(
+            sync: true,
+          );
+          addTearDown(completion.close);
+          late Session operationSession;
+          late AccountId operationAccountId;
+          when(
+            moveToMailboxInteractor.execute(any, any, any, any),
+          ).thenAnswer((invocation) {
+            operationSession = invocation.positionalArguments[0] as Session;
+            operationAccountId = invocation.positionalArguments[1] as AccountId;
+            return completion.stream;
+          });
+
+          searchEmailController.pressEmailAction(
+            EmailActionType.moveToTrash,
+            primarySearchEmail,
+            primarySource,
+          );
+          expect(operationAccountId, primaryAccountId);
+          final detailMailboxIds = Map<MailboxId, bool>.from(
+            threadDetailController.emailIdsPresentation[sameEmailId]!.mailboxIds!,
+          );
+          mailboxDashboardController.sessionCurrent =
+              sessionWithDelegatedAccount();
+          completion.add(
+            Right(
+              MoveToMailboxSuccess(
+                sameEmailId,
+                sourceMailboxId,
+                destinationMailboxId,
+                MoveAction.moving,
+                EmailActionType.moveToTrash,
+                context: EmailMutationContext.fromOperation(
+                  operationSession,
+                  operationAccountId,
+                ),
+                originalMailboxIdsWithEmailIds: {
+                  sourceMailboxId: [sameEmailId],
+                },
+                emailIdsWithReadStatus: {sameEmailId: false},
+              ),
+            ),
+          );
+          await tester.pump();
+
+          expect(primarySearchEmail.mailboxContain, same(primarySource));
+          expect(delegatedBackgroundEmail.mailboxContain, same(delegatedSource));
+          expect(
+            threadDetailController.emailIdsPresentation[sameEmailId]!.mailboxIds,
+            detailMailboxIds,
+          );
+          expect(mailboxDashboardController.listResultSearch, [same(primarySearchEmail)]);
+          expect(
+            mailboxDashboardController.emailsInCurrentMailbox,
+            [same(delegatedBackgroundEmail)],
+          );
+          verifyNever(
+            appToast.showToastMessage(
+              any,
+              any,
+              actionName: anyNamed('actionName'),
+              onActionClick: anyNamed('onActionClick'),
+              actionIcon: anyNamed('actionIcon'),
+              leadingSVGIcon: anyNamed('leadingSVGIcon'),
+              leadingSVGIconColor: anyNamed('leadingSVGIconColor'),
+              backgroundColor: anyNamed('backgroundColor'),
+              textColor: anyNamed('textColor'),
+            ),
+          );
+        },
+      );
+
+      testWidgets(
+        'stale Thread Detail contextual failure is ignored',
+        (tester) async {
+          final session = mailboxDashboardController.sessionCurrent!;
+          registerSearchEmailController();
+          final threadDetailController = registerThreadDetailController();
+          final emailId = EmailId(Id('batch-2b-thread-detail-email'));
+          threadDetailController.emailsInThreadDetailInfo.add(
+            EmailInThreadDetailInfo(
+              emailId: emailId,
+              keywords: const {},
+              mailboxIds: const {},
+              isValidToDisplay: true,
+            ),
+          );
+          final stream = StreamController<Either<Failure, Success>>(
+            sync: true,
+          );
+          addTearDown(stream.close);
+          when(
+            markAsMultipleEmailReadInteractor.execute(any, any, any, any, any),
+          ).thenAnswer((_) => stream.stream);
+          clearInteractions(toastManager);
+
+          await threadDetailController.onThreadDetailActionClick(
+            EmailActionType.markAsRead,
+          );
+          mailboxDashboardController.sessionCurrent =
+              sessionWithDelegatedAccount();
+          stream.add(
+            Left(
+              ContextualMarkAsMultipleEmailReadFailure(
+                EmailMutationContext.fromOperation(session, primaryAccountId),
+                ReadActions.markAsRead,
+                Exception('stale thread failure'),
+              ),
+            ),
+          );
+          await tester.pump();
+
+          verifyNever(toastManager.showMessageFailure(any));
+          expect(threadDetailController.emailsInThreadDetailInfo, hasLength(1));
         },
       );
     });

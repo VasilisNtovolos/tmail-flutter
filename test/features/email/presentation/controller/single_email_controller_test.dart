@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:core/core.dart';
@@ -19,6 +20,7 @@ import 'package:jmap_dart_client/jmap/mail/email/email.dart';
 import 'package:mockito/annotations.dart';
 import 'package:mockito/mockito.dart';
 import 'package:model/email/presentation_email.dart';
+import 'package:model/email/read_actions.dart';
 import 'package:tmail_ui_user/features/caching/caching_manager.dart';
 import 'package:tmail_ui_user/features/download/presentation/controllers/download_controller.dart';
 import 'package:tmail_ui_user/features/email/data/datasource/calendar_event_datasource.dart';
@@ -26,6 +28,9 @@ import 'package:tmail_ui_user/features/email/data/datasource_impl/html_datasourc
 import 'package:tmail_ui_user/features/email/data/local/html_analyzer.dart';
 import 'package:tmail_ui_user/features/email/data/repository/calendar_event_repository_impl.dart';
 import 'package:tmail_ui_user/features/email/domain/model/event_action.dart';
+import 'package:tmail_ui_user/features/email/domain/model/email_mutation_context.dart';
+import 'package:tmail_ui_user/features/email/domain/model/mark_read_action.dart';
+import 'package:tmail_ui_user/features/email/domain/state/mark_as_email_read_state.dart';
 import 'package:tmail_ui_user/features/email/domain/state/get_email_content_state.dart';
 import 'package:tmail_ui_user/features/email/domain/state/parse_calendar_event_state.dart';
 import 'package:tmail_ui_user/features/email/domain/usecases/calendar_event_accept_interactor.dart';
@@ -59,6 +64,7 @@ import 'package:tmail_ui_user/main/utils/twake_app_manager.dart';
 import 'package:uuid/uuid.dart';
 
 import '../../../../fixtures/account_fixtures.dart';
+import '../../../../fixtures/session_fixtures.dart';
 import 'single_email_controller_test.mocks.dart';
 
 mockControllerCallback() => InternalFinalCallback<void>(callback: () {});
@@ -522,6 +528,73 @@ void main() {
 
       // cleanup
       Get.delete<SingleEmailController>();
+    },
+  );
+
+  testWidgets(
+    'stale contextual read failure does not show feedback',
+    (tester) async {
+      final sessionS1 = SessionFixtures.aliceSession;
+      final sessionS2 = SessionFixtures.aliceSessionWithoutAICapability;
+      final email = PresentationEmail(
+        id: EmailId(Id('batch-2b-single-email')),
+        keywords: {},
+        mailboxIds: {},
+      );
+      final stream = StreamController<Either<Failure, Success>>(sync: true);
+      addTearDown(stream.close);
+      when(mailboxDashboardController.selectedEmail).thenReturn(Rxn(email));
+      when(mailboxDashboardController.emailUIAction).thenReturn(Rxn(EmailUIAction()));
+      when(mailboxDashboardController.viewState).thenReturn(Rx(Right(UIState.idle)));
+      when(mailboxDashboardController.sessionCurrent).thenReturn(sessionS1);
+      when(mailboxDashboardController.accountId).thenReturn(Rxn(AccountFixtures.aliceAccountId));
+      when(mailboxDashboardController.emailActionAccountId)
+          .thenReturn(AccountFixtures.aliceAccountId);
+      when(mailboxDashboardController.emailActionDispatchAccountId)
+          .thenReturn(AccountFixtures.aliceAccountId);
+      when(mailboxDashboardController.downloadController).thenReturn(downloadController);
+      when(downloadController.downloadUIAction).thenAnswer((_) => Rxn(DownloadUIAction.idle));
+      when(markAsEmailReadInteractor.execute(any, any, any, any, any, any))
+          .thenAnswer((_) => stream.stream);
+      await tester.pumpWidget(
+        makeTestableWidget(child: const SizedBox.shrink()),
+      );
+      await tester.pump();
+      clearInteractions(appToast);
+
+      final context = EmailMutationContext.fromOperation(
+        sessionS1,
+        AccountFixtures.aliceAccountId,
+      );
+      singleEmailController.markAsEmailRead(
+        email,
+        ReadActions.markAsRead,
+        MarkReadAction.tap,
+      );
+      stream.add(
+        Left(
+          ContextualMarkAsEmailReadFailure(
+            context,
+            ReadActions.markAsRead,
+            exception: Exception('current single-email failure'),
+          ),
+        ),
+      );
+      verify(appToast.showToastErrorMessage(any, any)).called(1);
+      clearInteractions(appToast);
+      when(mailboxDashboardController.sessionCurrent).thenReturn(sessionS2);
+      stream.add(
+        Left(
+          ContextualMarkAsEmailReadFailure(
+            context,
+            ReadActions.markAsRead,
+            exception: Exception('stale single-email failure'),
+          ),
+        ),
+      );
+      await tester.pump();
+
+      verifyNever(appToast.showToastErrorMessage(any, any));
     },
   );
 }

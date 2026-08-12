@@ -4,10 +4,11 @@ import 'package:jmap_dart_client/jmap/account_id.dart';
 import 'package:jmap_dart_client/jmap/mail/email/email.dart';
 import 'package:jmap_dart_client/jmap/mail/mailbox/mailbox.dart';
 import 'package:model/email/read_actions.dart';
+import 'package:tmail_ui_user/features/email/domain/model/email_mutation_context.dart';
 import 'package:tmail_ui_user/features/email/domain/model/mark_read_action.dart';
 
 class MarkAsEmailReadSuccess extends UIState {
-  final AccountId accountId;
+  final EmailMutationContext context;
   final EmailId emailId;
   final ReadActions readActions;
   final MarkReadAction markReadAction;
@@ -18,13 +19,17 @@ class MarkAsEmailReadSuccess extends UIState {
     this.readActions,
     this.markReadAction,
     this.mailboxId, {
-    required this.accountId,
+    required this.context,
   });
 
+  AccountId get accountId => context.accountId;
+
   @override
-  List<Object?> get props => [accountId, emailId, readActions, markReadAction, mailboxId];
+  List<Object?> get props => [context, emailId, readActions, markReadAction, mailboxId];
 }
 
+/// Accountless base retained for non-repository/preflight callers.
+/// Repository failures use [ContextualMarkAsEmailReadFailure].
 class MarkAsEmailReadFailure extends FeatureFailure {
   final ReadActions readActions;
 
@@ -32,4 +37,17 @@ class MarkAsEmailReadFailure extends FeatureFailure {
 
   @override
   List<Object?> get props => [readActions, ...super.props];
+}
+
+class ContextualMarkAsEmailReadFailure extends MarkAsEmailReadFailure {
+  final EmailMutationContext context;
+
+  ContextualMarkAsEmailReadFailure(
+    this.context,
+    ReadActions readActions, {
+    dynamic exception,
+  }) : super(readActions, exception: exception);
+
+  @override
+  List<Object?> get props => [context, ...super.props];
 }

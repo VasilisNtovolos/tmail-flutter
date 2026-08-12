@@ -9,6 +9,7 @@ import 'package:jmap_dart_client/jmap/core/session/session.dart';
 import 'package:jmap_dart_client/jmap/mail/email/email.dart';
 import 'package:jmap_dart_client/jmap/mail/mailbox/mailbox.dart';
 import 'package:tmail_ui_user/features/email/domain/model/move_to_mailbox_request.dart';
+import 'package:tmail_ui_user/features/email/domain/model/email_mutation_context.dart';
 import 'package:tmail_ui_user/features/email/domain/repository/email_repository.dart';
 import 'package:tmail_ui_user/features/thread/domain/state/move_multiple_email_to_mailbox_state.dart';
 
@@ -23,6 +24,7 @@ class MoveMultipleEmailToMailboxInteractor {
     MoveToMailboxRequest moveRequest,
     Map<EmailId, bool> emailIdsWithReadStatus,
   ) async* {
+    final context = EmailMutationContext.fromOperation(session, accountId);
     try {
       yield Right(LoadingMoveMultipleEmailToMailboxAll());
       final result = await _emailRepository.moveToMailbox(session, accountId, moveRequest);
@@ -32,13 +34,17 @@ class MoveMultipleEmailToMailboxInteractor {
           moveRequest.destinationMailboxId,
           moveRequest.moveAction,
           moveRequest.emailActionType,
-          accountId: accountId,
+          context: context,
           destinationPath: moveRequest.destinationPath,
           originalMailboxIdsWithEmailIds: moveRequest.currentMailboxes,
           emailIdsWithReadStatus: emailIdsWithReadStatus,
         ));
       } else if (result.emailIdsSuccess.isEmpty) {
-        yield Left(MoveMultipleEmailToMailboxAllFailure(moveRequest.moveAction, moveRequest.emailActionType));
+        yield Left(ContextualMoveMultipleEmailToMailboxAllFailure(
+          context,
+          moveRequest.moveAction,
+          moveRequest.emailActionType,
+        ));
       } else {
         final originalMailboxIdsWithEmailIds = Map<MailboxId, List<EmailId>>.from(
           moveRequest.currentMailboxes,
@@ -55,14 +61,19 @@ class MoveMultipleEmailToMailboxInteractor {
           moveRequest.destinationMailboxId,
           moveRequest.moveAction,
           moveRequest.emailActionType,
-          accountId: accountId,
+          context: context,
           destinationPath: moveRequest.destinationPath,
           originalMailboxIdsWithMoveSucceededEmailIds: originalMailboxIdsWithMoveSucceededEmailIds,
           moveSucceededEmailIdsWithReadStatus: moveSucceededEmailIdsWithReadStatus,
         ));
       }
     } catch (e) {
-      yield Left(MoveMultipleEmailToMailboxFailure(moveRequest.emailActionType, moveRequest.moveAction, e));
+      yield Left(ContextualMoveMultipleEmailToMailboxFailure(
+        context,
+        moveRequest.emailActionType,
+        moveRequest.moveAction,
+        e,
+      ));
     }
   }
 }

@@ -6,6 +6,7 @@ import 'package:jmap_dart_client/jmap/core/session/session.dart';
 import 'package:jmap_dart_client/jmap/mail/email/email.dart';
 import 'package:jmap_dart_client/jmap/mail/mailbox/mailbox.dart';
 import 'package:tmail_ui_user/features/email/domain/repository/email_repository.dart';
+import 'package:tmail_ui_user/features/email/domain/model/email_mutation_context.dart';
 import 'package:tmail_ui_user/features/email/domain/state/delete_multiple_emails_permanently_state.dart';
 
 class DeleteMultipleEmailsPermanentlyInteractor {
@@ -19,6 +20,7 @@ class DeleteMultipleEmailsPermanentlyInteractor {
     List<EmailId> emailIds,
     MailboxId? mailboxId,
   ) async* {
+    final context = EmailMutationContext.fromOperation(session, accountId);
     try {
       yield Right<Failure, Success>(LoadingDeleteMultipleEmailsPermanentlyAll());
       final listResult = await _emailRepository.deleteMultipleEmailsPermanently(session, accountId, emailIds);
@@ -26,19 +28,23 @@ class DeleteMultipleEmailsPermanentlyInteractor {
         yield Right<Failure, Success>(DeleteMultipleEmailsPermanentlyAllSuccess(
           listResult.emailIdsSuccess,
           mailboxId,
-          accountId: accountId,
+          context: context,
         ));
       } else if (listResult.emailIdsSuccess.isNotEmpty) {
         yield Right<Failure, Success>(DeleteMultipleEmailsPermanentlyHasSomeEmailFailure(
           listResult.emailIdsSuccess,
           mailboxId,
-          accountId: accountId,
+          context: context,
         ));
       } else {
-        yield Left<Failure, Success>(DeleteMultipleEmailsPermanentlyAllFailure());
+        yield Left<Failure, Success>(
+          ContextualDeleteMultipleEmailsPermanentlyAllFailure(context),
+        );
       }
     } catch (e) {
-      yield Left<Failure, Success>(DeleteMultipleEmailsPermanentlyFailure(e));
+      yield Left<Failure, Success>(
+        ContextualDeleteMultipleEmailsPermanentlyFailure(context, e),
+      );
     }
   }
 }

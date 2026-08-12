@@ -7,6 +7,7 @@ import 'package:jmap_dart_client/jmap/mail/email/email.dart';
 import 'package:jmap_dart_client/jmap/mail/mailbox/mailbox.dart';
 import 'package:model/email/read_actions.dart';
 import 'package:tmail_ui_user/features/email/domain/model/mark_read_action.dart';
+import 'package:tmail_ui_user/features/email/domain/model/email_mutation_context.dart';
 import 'package:tmail_ui_user/features/email/domain/repository/email_repository.dart';
 import 'package:tmail_ui_user/features/email/domain/state/mark_as_email_read_state.dart';
 
@@ -23,6 +24,7 @@ class MarkAsEmailReadInteractor {
     MarkReadAction markReadAction,
     MailboxId? mailboxId,
   ) async* {
+    final context = EmailMutationContext.fromOperation(session, accountId);
     try {
       final result = await _emailRepository.markAsRead(
         session,
@@ -32,18 +34,22 @@ class MarkAsEmailReadInteractor {
       );
 
       if (result.emailIdsSuccess.isEmpty) {
-        yield Left(MarkAsEmailReadFailure(readAction));
+        yield Left(ContextualMarkAsEmailReadFailure(context, readAction));
       } else {
         yield Right(MarkAsEmailReadSuccess(
           result.emailIdsSuccess.first,
           readAction,
           markReadAction,
           mailboxId,
-          accountId: accountId,
+          context: context,
       ));
       }
     } catch (e) {
-      yield Left(MarkAsEmailReadFailure(readAction, exception: e));
+      yield Left(ContextualMarkAsEmailReadFailure(
+        context,
+        readAction,
+        exception: e,
+      ));
     }
   }
 }

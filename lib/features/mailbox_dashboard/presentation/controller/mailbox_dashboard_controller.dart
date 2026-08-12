@@ -67,6 +67,7 @@ import 'package:tmail_ui_user/features/email/domain/state/get_restored_deleted_m
 import 'package:tmail_ui_user/features/email/domain/state/mark_as_email_read_state.dart';
 import 'package:tmail_ui_user/features/email/domain/state/mark_as_email_star_state.dart';
 import 'package:tmail_ui_user/features/email/domain/state/move_to_mailbox_state.dart';
+import 'package:tmail_ui_user/features/email/domain/model/email_mutation_context.dart';
 import 'package:tmail_ui_user/features/email/domain/state/restore_deleted_message_state.dart';
 import 'package:tmail_ui_user/features/email/domain/state/store_sending_email_state.dart';
 import 'package:tmail_ui_user/features/email/domain/state/unsubscribe_email_state.dart';
@@ -538,8 +539,10 @@ class MailboxDashBoardController extends ReloadableController
     } else if (success is UpdateEmailDraftsSuccess) {
       handleUpdateEmailAsDraftsSuccess();
     } else if (success is MoveToMailboxSuccess) {
+      if (!isCurrentEmailMutation(success.context, sessionCurrent)) return;
       _moveToMailboxSuccess(success);
     } else if (success is DeleteEmailPermanentlySuccess) {
+      if (!isCurrentEmailMutation(success.context, sessionCurrent)) return;
       _deleteEmailPermanentlySuccess(success);
     } else if (success is MarkAsMailboxReadAllSuccess ||
         success is MarkAsMailboxReadHasSomeEmailFailure) {
@@ -551,18 +554,21 @@ class MailboxDashBoardController extends ReloadableController
     } else if (success is UpdateVacationSuccess) {
       _handleUpdateVacationSuccess(success);
     } else if (success is MarkAsMultipleEmailReadAllSuccess) {
+      if (!isCurrentEmailMutation(success.context, sessionCurrent)) return;
       _markAsReadSelectedMultipleEmailSuccess(
         success.accountId,
         success.readActions,
         success.emailIds,
       );
     } else if (success is MarkAsMultipleEmailReadHasSomeEmailFailure) {
+      if (!isCurrentEmailMutation(success.context, sessionCurrent)) return;
       _markAsReadSelectedMultipleEmailSuccess(
         success.accountId,
         success.readActions,
         success.successEmailIds,
       );
     } else if (success is MarkAsStarMultipleEmailAllSuccess) {
+      if (!isCurrentEmailMutation(success.context, sessionCurrent)) return;
       _markAsStarMultipleEmailSuccess(
         success.accountId,
         success.markStarAction,
@@ -570,6 +576,7 @@ class MailboxDashBoardController extends ReloadableController
         success.emailIds,
       );
     } else if (success is MarkAsStarMultipleEmailHasSomeEmailFailure) {
+      if (!isCurrentEmailMutation(success.context, sessionCurrent)) return;
       _markAsStarMultipleEmailSuccess(
         success.accountId,
         success.markStarAction,
@@ -578,9 +585,17 @@ class MailboxDashBoardController extends ReloadableController
       );
     } else if (success is MoveMultipleEmailToMailboxAllSuccess ||
         success is MoveMultipleEmailToMailboxHasSomeEmailFailure) {
+      final context = success is MoveMultipleEmailToMailboxAllSuccess
+          ? success.context
+          : (success as MoveMultipleEmailToMailboxHasSomeEmailFailure).context;
+      if (!isCurrentEmailMutation(context, sessionCurrent)) return;
       _moveSelectedMultipleEmailToMailboxSuccess(success);
     } else if (success is DeleteMultipleEmailsPermanentlyAllSuccess ||
         success is DeleteMultipleEmailsPermanentlyHasSomeEmailFailure) {
+      final context = success is DeleteMultipleEmailsPermanentlyAllSuccess
+          ? success.context
+          : (success as DeleteMultipleEmailsPermanentlyHasSomeEmailFailure).context;
+      if (!isCurrentEmailMutation(context, sessionCurrent)) return;
       _deleteMultipleEmailsPermanentlySuccess(success);
     } else if(success is GetEmailByIdSuccess) {
       openEmailDetailedView(success.email);
@@ -593,6 +608,7 @@ class MailboxDashBoardController extends ReloadableController
     } else if (success is EmptySpamFolderSuccess) {
       _emptySpamFolderSuccess(success);
     } else if (success is MarkAsEmailReadSuccess) {
+      if (!isCurrentEmailMutation(success.context, sessionCurrent)) return;
       _markAsReadEmailSuccess(success);
     } else if (success is DeleteSendingEmailSuccess) {
       getAllSendingEmails();
@@ -609,6 +625,7 @@ class MailboxDashBoardController extends ReloadableController
     } else if (success is GetIdentityCacheOnWebSuccess) {
       goToSettings();
     } else if (success is MarkAsStarEmailSuccess) {
+      if (!isCurrentEmailMutation(success.context, sessionCurrent)) return;
       updateEmailFlagByEmailIds(
         [success.emailId],
         operationAccountId: success.accountId,
@@ -671,8 +688,16 @@ class MailboxDashBoardController extends ReloadableController
     } else if (failure is EmptyTrashFolderFailure) {
       _handleEmptyTrashFolderFailure(failure);
     } else if (failure is MoveMultipleEmailToMailboxFailure) {
+      if (failure is ContextualMoveMultipleEmailToMailboxFailure &&
+          !isCurrentEmailMutation(failure.context, sessionCurrent)) {
+        return;
+      }
       toastManager.showMessageFailure(failure);
     } else if (failure is MoveToMailboxFailure) {
+      if (failure is ContextualMoveToMailboxFailure &&
+          !isCurrentEmailMutation(failure.context, sessionCurrent)) {
+        return;
+      }
       toastManager.showMessageFailure(failure);
     } else if (failure is GetAllComposerCacheFailure) {
       _handleIdentityCache();
@@ -1336,7 +1361,7 @@ class MailboxDashBoardController extends ReloadableController
         actionName: AppLocalizations.of(currentContext!).undo,
         onActionClick: () {
           _revertedToOriginalMailbox(
-            success.accountId,
+            success.context,
             MoveToMailboxRequest(
               {success.destinationMailboxId: [success.emailId]},
               success.currentMailboxId,
@@ -1355,16 +1380,14 @@ class MailboxDashBoardController extends ReloadableController
   }
 
   void _revertedToOriginalMailbox(
-    AccountId operationAccountId,
+    EmailMutationContext context,
     MoveToMailboxRequest newMoveRequest,
     Map<EmailId, bool> emailIdsWithReadStatus,
   ) {
-    final session = sessionCurrent;
-    if (session != null &&
-        CapabilityIdentifier.jmapMail.isSupported(session, operationAccountId)) {
+    if (isCurrentEmailMutation(context, sessionCurrent)) {
       moveToMailbox(
-        session,
-        operationAccountId,
+        context.session,
+        context.accountId,
         newMoveRequest,
         emailIdsWithReadStatus,
       );
@@ -1512,7 +1535,12 @@ class MailboxDashBoardController extends ReloadableController
         message,
         actionName: AppLocalizations.of(currentContext!).undo,
         onActionClick: () {
-          markAsEmailRead(success.emailId, undoAction, MarkReadAction.undo, success.mailboxId);
+          _undoMarkAsEmailRead(
+            success.context,
+            success.emailId,
+            undoAction,
+            success.mailboxId,
+          );
         },
         leadingSVGIcon: imagePaths.icToastSuccessMessage,
         backgroundColor: AppColor.toastSuccessBackgroundColor,
@@ -1857,12 +1885,10 @@ class MailboxDashBoardController extends ReloadableController
     MoveAction? moveAction;
     EmailActionType? emailActionType;
     Map<EmailId, bool>? emailIdsWithReadStatus;
-    AccountId? operationAccountId;
     bool isUndoActionEnabled = false;
 
     if (success is MoveMultipleEmailToMailboxAllSuccess) {
       destinationPath = success.destinationPath;
-      operationAccountId = success.accountId;
       movedEmailIds = success.movedListEmailId;
       currentMailboxId = success.originalMailboxIdsWithEmailIds.keys.firstOrNull;
       destinationMailboxId = success.destinationMailboxId;
@@ -1872,7 +1898,6 @@ class MailboxDashBoardController extends ReloadableController
       isUndoActionEnabled = success.originalMailboxIdsWithEmailIds.length == 1;
     } else if (success is MoveMultipleEmailToMailboxHasSomeEmailFailure) {
       destinationPath = success.destinationPath;
-      operationAccountId = success.accountId;
       movedEmailIds = success.movedListEmailId;
       currentMailboxId = success.originalMailboxIdsWithMoveSucceededEmailIds.keys.firstOrNull;
       destinationMailboxId = success.destinationMailboxId;
@@ -1882,10 +1907,11 @@ class MailboxDashBoardController extends ReloadableController
       isUndoActionEnabled = success.originalMailboxIdsWithMoveSucceededEmailIds.length == 1;
     }
 
-    final undoAccountId = operationAccountId;
+    final undoContext = success is MoveMultipleEmailToMailboxAllSuccess
+        ? success.context
+        : (success as MoveMultipleEmailToMailboxHasSomeEmailFailure).context;
     if (currentMailboxId == null ||
         currentOverlayContext == null ||
-        undoAccountId == null ||
         emailActionType == null ||
         moveAction != MoveAction.moving) {
       return;
@@ -1914,7 +1940,7 @@ class MailboxDashBoardController extends ReloadableController
           final newDestinationMailboxId = currentMailboxId;
           if (newCurrentMailboxId != null && newDestinationMailboxId != null) {
             _revertedSelectionEmailToOriginalMailbox(
-              undoAccountId,
+              undoContext,
               MoveToMailboxRequest(
                 {newCurrentMailboxId: movedEmailIds},
                 newDestinationMailboxId,
@@ -1936,19 +1962,34 @@ class MailboxDashBoardController extends ReloadableController
   }
 
   void _revertedSelectionEmailToOriginalMailbox(
-    AccountId operationAccountId,
+    EmailMutationContext context,
     MoveToMailboxRequest newMoveRequest,
     Map<EmailId, bool> emailIdsWithReadStatus,
   ) {
-    final session = sessionCurrent;
-    if (session != null &&
-        CapabilityIdentifier.jmapMail.isSupported(session, operationAccountId)) {
+    if (isCurrentEmailMutation(context, sessionCurrent)) {
       consumeState(_moveMultipleEmailToMailboxInteractor.execute(
-        session,
-        operationAccountId,
+        context.session,
+        context.accountId,
         newMoveRequest,
         emailIdsWithReadStatus));
     }
+  }
+
+  void _undoMarkAsEmailRead(
+    EmailMutationContext context,
+    EmailId emailId,
+    ReadActions readAction,
+    MailboxId? mailboxId,
+  ) {
+    if (!isCurrentEmailMutation(context, sessionCurrent)) return;
+    consumeState(_markAsEmailReadInteractor.execute(
+      context.session,
+      context.accountId,
+      emailId,
+      readAction,
+      MarkReadAction.undo,
+      mailboxId,
+    ));
   }
 
   void unSpamSelectedMultipleEmail(List<PresentationEmail> listEmail) {

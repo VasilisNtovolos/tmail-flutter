@@ -582,6 +582,7 @@ class MailboxController extends BaseMailboxController
     ever(mailboxDashBoardController.viewState, (viewState) {
       final reactionState = viewState.getOrElse(() => UIState.idle);
       if (reactionState is MarkAsEmailReadSuccess) {
+        if (!isCurrentEmailMutation(reactionState.context, session)) return;
         _handleMarkEmailsAsReadOrUnread(
           affectedMailboxId: reactionState.mailboxId,
           operationAccountId: reactionState.accountId,
@@ -593,6 +594,7 @@ class MailboxController extends BaseMailboxController
             : null,
         );
       } else if (reactionState is MarkAsMultipleEmailReadAllSuccess) {
+        if (!isCurrentEmailMutation(reactionState.context, session)) return;
         for (var emailIdsByMailboxId in reactionState.markSuccessEmailIdsByMailboxId.entries) {
           _handleMarkEmailsAsReadOrUnread(
             affectedMailboxId: emailIdsByMailboxId.key,
@@ -606,6 +608,7 @@ class MailboxController extends BaseMailboxController
           );
         }
       } else if (reactionState is MarkAsMultipleEmailReadHasSomeEmailFailure) {
+        if (!isCurrentEmailMutation(reactionState.context, session)) return;
         for (var emailIdsByMailboxId in reactionState.markSuccessEmailIdsByMailboxId.entries) {
           _handleMarkEmailsAsReadOrUnread(
             affectedMailboxId: emailIdsByMailboxId.key,
@@ -647,18 +650,21 @@ class MailboxController extends BaseMailboxController
           totalEmailsChanged: -1,
         );
       } else if (reactionState is DeleteEmailPermanentlySuccess) {
+        if (!isCurrentEmailMutation(reactionState.context, session)) return;
         _handleDeleteEmailsFromMailbox(
           affectedMailboxId: reactionState.mailboxId,
           operationAccountId: reactionState.accountId,
           totalEmailsChanged: -1,
         );
       } else if (reactionState is DeleteMultipleEmailsPermanentlyAllSuccess) {
+        if (!isCurrentEmailMutation(reactionState.context, session)) return;
         _handleDeleteEmailsFromMailbox(
           affectedMailboxId: reactionState.mailboxId,
           operationAccountId: reactionState.accountId,
           totalEmailsChanged: -reactionState.emailIds.length,
         );
       } else if (reactionState is DeleteMultipleEmailsPermanentlyHasSomeEmailFailure) {
+        if (!isCurrentEmailMutation(reactionState.context, session)) return;
         _handleDeleteEmailsFromMailbox(
           affectedMailboxId: reactionState.mailboxId,
           operationAccountId: reactionState.accountId,
@@ -675,6 +681,7 @@ class MailboxController extends BaseMailboxController
           totalEmailsChanged: -reactionState.emailIds.length,
         );
       } else if (reactionState is MoveToMailboxSuccess) {
+        if (!isCurrentEmailMutation(reactionState.context, session)) return;
         _handleMoveEmailsToMailbox(
           operationAccountId: reactionState.accountId,
           originalMailboxIdsWithEmailIds: reactionState.originalMailboxIdsWithEmailIds,
@@ -682,6 +689,7 @@ class MailboxController extends BaseMailboxController
           emailIdsWithReadStatus: reactionState.emailIdsWithReadStatus,
         );
       } else if (reactionState is MoveMultipleEmailToMailboxAllSuccess) {
+        if (!isCurrentEmailMutation(reactionState.context, session)) return;
         _handleMoveEmailsToMailbox(
           operationAccountId: reactionState.accountId,
           originalMailboxIdsWithEmailIds: reactionState.originalMailboxIdsWithEmailIds,
@@ -689,6 +697,7 @@ class MailboxController extends BaseMailboxController
           emailIdsWithReadStatus: reactionState.emailIdsWithReadStatus,
         );
       } else if (reactionState is MoveMultipleEmailToMailboxHasSomeEmailFailure) {
+        if (!isCurrentEmailMutation(reactionState.context, session)) return;
         _handleMoveEmailsToMailbox(
           operationAccountId: reactionState.accountId,
           originalMailboxIdsWithEmailIds: reactionState.originalMailboxIdsWithMoveSucceededEmailIds,

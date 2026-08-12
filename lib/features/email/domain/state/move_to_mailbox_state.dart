@@ -4,12 +4,13 @@ import 'package:jmap_dart_client/jmap/account_id.dart';
 import 'package:jmap_dart_client/jmap/mail/email/email.dart';
 import 'package:jmap_dart_client/jmap/mail/mailbox/mailbox.dart';
 import 'package:model/model.dart';
+import 'package:tmail_ui_user/features/email/domain/model/email_mutation_context.dart';
 import 'package:tmail_ui_user/features/email/domain/model/move_action.dart';
 
 class LoadingMoveToMailbox extends UIState {}
 
 class MoveToMailboxSuccess extends UIState {
-  final AccountId accountId;
+  final EmailMutationContext context;
   final EmailId emailId;
   final MailboxId currentMailboxId;
   final MailboxId destinationMailboxId;
@@ -26,16 +27,18 @@ class MoveToMailboxSuccess extends UIState {
     this.moveAction,
     this.emailActionType,
     {
-      required this.accountId,
+      required this.context,
       this.destinationPath,
       required this.originalMailboxIdsWithEmailIds,
       required this.emailIdsWithReadStatus,
     }
   );
 
+  AccountId get accountId => context.accountId;
+
   @override
   List<Object?> get props => [
-    accountId,
+    context,
     emailId,
     currentMailboxId,
     destinationMailboxId,
@@ -47,6 +50,8 @@ class MoveToMailboxSuccess extends UIState {
   ];
 }
 
+/// Accountless base retained for preflight failures.
+/// Repository failures use [ContextualMoveToMailboxFailure].
 class MoveToMailboxFailure extends FeatureFailure {
   final EmailActionType emailActionType;
 
@@ -54,4 +59,17 @@ class MoveToMailboxFailure extends FeatureFailure {
 
   @override
   List<Object?> get props => [emailActionType, ...super.props];
+}
+
+class ContextualMoveToMailboxFailure extends MoveToMailboxFailure {
+  final EmailMutationContext context;
+
+  ContextualMoveToMailboxFailure(
+    this.context,
+    EmailActionType emailActionType, {
+    dynamic exception,
+  }) : super(emailActionType, exception: exception);
+
+  @override
+  List<Object?> get props => [context, ...super.props];
 }

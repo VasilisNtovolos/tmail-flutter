@@ -5,6 +5,7 @@ import 'package:jmap_dart_client/jmap/account_id.dart';
 import 'package:jmap_dart_client/jmap/core/session/session.dart';
 import 'package:jmap_dart_client/jmap/mail/email/email.dart';
 import 'package:tmail_ui_user/features/email/domain/model/move_to_mailbox_request.dart';
+import 'package:tmail_ui_user/features/email/domain/model/email_mutation_context.dart';
 import 'package:tmail_ui_user/features/email/domain/repository/email_repository.dart';
 import 'package:tmail_ui_user/features/email/domain/state/move_to_mailbox_state.dart';
 
@@ -19,6 +20,7 @@ class MoveToMailboxInteractor {
     MoveToMailboxRequest moveRequest,
     Map<EmailId, bool> emailIdsWithReadStatus,
   ) async* {
+    final context = EmailMutationContext.fromOperation(session, accountId);
     try {
       yield Right(LoadingMoveToMailbox());
       final result = await _emailRepository.moveToMailbox(session, accountId, moveRequest);
@@ -29,16 +31,23 @@ class MoveToMailboxInteractor {
           moveRequest.destinationMailboxId,
           moveRequest.moveAction,
           moveRequest.emailActionType,
-          accountId: accountId,
+          context: context,
           destinationPath: moveRequest.destinationPath,
           originalMailboxIdsWithEmailIds: moveRequest.currentMailboxes,
           emailIdsWithReadStatus: emailIdsWithReadStatus,
         ));
       } else {
-        yield Left(MoveToMailboxFailure(moveRequest.emailActionType));
+        yield Left(ContextualMoveToMailboxFailure(
+          context,
+          moveRequest.emailActionType,
+        ));
       }
     } catch (e) {
-      yield Left(MoveToMailboxFailure(moveRequest.emailActionType, exception: e));
+      yield Left(ContextualMoveToMailboxFailure(
+        context,
+        moveRequest.emailActionType,
+        exception: e,
+      ));
     }
   }
 }

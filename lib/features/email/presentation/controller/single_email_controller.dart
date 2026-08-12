@@ -230,8 +230,10 @@ class SingleEmailController extends BaseController with AppLoaderMixin {
     } else if (success is GetEmailContentFromCacheSuccess) {
       _getEmailContentOfflineSuccess(success);
     } else if (success is MarkAsEmailReadSuccess) {
+      if (!isCurrentEmailMutation(success.context, session)) return;
       _handleMarkAsEmailReadCompleted(success);
     } else if (success is MarkAsStarEmailSuccess) {
+      if (!isCurrentEmailMutation(success.context, session)) return;
       _markAsEmailStarSuccess(success);
     } else if (success is GetAllIdentitiesSuccess) {
       _getAllIdentitiesSuccess(success);
@@ -257,6 +259,10 @@ class SingleEmailController extends BaseController with AppLoaderMixin {
   @override
   void handleFailureViewState(Failure failure) {
     if (failure is MarkAsEmailReadFailure) {
+      if (failure is ContextualMarkAsEmailReadFailure &&
+          !isCurrentEmailMutation(failure.context, session)) {
+        return;
+      }
       _handleMarkAsEmailReadFailure(failure);
     } else if (failure is ParseCalendarEventFailure) {
       _handleParseCalendarEventFailure(failure);
@@ -861,7 +867,7 @@ class SingleEmailController extends BaseController with AppLoaderMixin {
   }
 
   void _markAsEmailStarSuccess(MarkAsStarEmailSuccess success) {
-    if (success.accountId != accountId) return;
+    if (!isCurrentEmailMutation(success.context, session)) return;
     final newKeywords = {
       KeyWordIdentifier.emailFlagged:
         success.markStarAction == MarkStarAction.markStar,

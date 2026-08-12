@@ -392,6 +392,7 @@ class ThreadController extends BaseController with EmailActionController {
           readAction: ReadActions.markAsRead,
         );
       } else if (reactionState is MoveToMailboxSuccess) {
+        if (!isCurrentEmailMutation(reactionState.context, _session)) return;
         if (reactionState.accountId != _accountId) return;
         mailboxDashBoardController.handleMoveEmailsToMailbox(
           originalMailboxIdsWithEmailIds: reactionState.originalMailboxIdsWithEmailIds,
@@ -399,6 +400,7 @@ class ThreadController extends BaseController with EmailActionController {
         );
         _checkIfCurrentMailboxCanLoadMore();
       } else if (reactionState is MoveMultipleEmailToMailboxAllSuccess) {
+        if (!isCurrentEmailMutation(reactionState.context, _session)) return;
         if (reactionState.accountId != _accountId) return;
         mailboxDashBoardController.handleMoveEmailsToMailbox(
           originalMailboxIdsWithEmailIds: reactionState.originalMailboxIdsWithEmailIds,
@@ -406,6 +408,7 @@ class ThreadController extends BaseController with EmailActionController {
         );
         _checkIfCurrentMailboxCanLoadMore();
       } else if (reactionState is MoveMultipleEmailToMailboxHasSomeEmailFailure) {
+        if (!isCurrentEmailMutation(reactionState.context, _session)) return;
         if (reactionState.accountId != _accountId) return;
         mailboxDashBoardController.handleMoveEmailsToMailbox(
           originalMailboxIdsWithEmailIds: reactionState.originalMailboxIdsWithMoveSucceededEmailIds,
@@ -413,6 +416,7 @@ class ThreadController extends BaseController with EmailActionController {
         );
         _checkIfCurrentMailboxCanLoadMore();
       } else if (reactionState is DeleteEmailPermanentlySuccess) {
+        if (!isCurrentEmailMutation(reactionState.context, _session)) return;
         if (reactionState.accountId != _accountId) return;
         _handleDeleteEmailsPermanentlyFromMailboxId(
           reactionState.mailboxId,
@@ -420,6 +424,7 @@ class ThreadController extends BaseController with EmailActionController {
         );
         _checkIfCurrentMailboxCanLoadMore();
       } else if (reactionState is DeleteMultipleEmailsPermanentlyAllSuccess) {
+        if (!isCurrentEmailMutation(reactionState.context, _session)) return;
         if (reactionState.accountId != _accountId) return;
         _handleDeleteEmailsPermanentlyFromMailboxId(
           reactionState.mailboxId,
@@ -427,6 +432,7 @@ class ThreadController extends BaseController with EmailActionController {
         );
         _checkIfCurrentMailboxCanLoadMore();
       } else if (reactionState is DeleteMultipleEmailsPermanentlyHasSomeEmailFailure) {
+        if (!isCurrentEmailMutation(reactionState.context, _session)) return;
         if (reactionState.accountId != _accountId) return;
         _handleDeleteEmailsPermanentlyFromMailboxId(
           reactionState.mailboxId,
