@@ -340,16 +340,19 @@ class SearchEmailController extends BaseController
       if (!mailboxDashBoardController.searchController.isSearchEmailRunning) return;
       final reactionState = viewState.getOrElse(() => UIState.idle);
       if (reactionState is MoveToMailboxSuccess) {
+        if (reactionState.accountId != accountId) return;
         mailboxDashBoardController.handleUpdateEmailsWithNewMailboxId(
           originalMailboxIdsWithEmailIds: reactionState.originalMailboxIdsWithEmailIds,
           destinationMailboxId: reactionState.destinationMailboxId,
         );
       } else if (reactionState is MoveMultipleEmailToMailboxAllSuccess) {
+        if (reactionState.accountId != accountId) return;
         mailboxDashBoardController.handleUpdateEmailsWithNewMailboxId(
           originalMailboxIdsWithEmailIds: reactionState.originalMailboxIdsWithEmailIds,
           destinationMailboxId: reactionState.destinationMailboxId,
         );
       } else if (reactionState is MoveMultipleEmailToMailboxHasSomeEmailFailure) {
+        if (reactionState.accountId != accountId) return;
         mailboxDashBoardController.handleUpdateEmailsWithNewMailboxId(
           originalMailboxIdsWithEmailIds: reactionState.originalMailboxIdsWithMoveSucceededEmailIds,
           destinationMailboxId: reactionState.destinationMailboxId,

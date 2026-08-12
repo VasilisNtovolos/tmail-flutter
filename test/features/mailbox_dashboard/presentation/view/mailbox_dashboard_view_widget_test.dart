@@ -1,7 +1,9 @@
 import 'package:core/data/network/config/dynamic_url_interceptors.dart';
+import 'package:core/data/network/download/download_manager.dart';
 import 'package:core/presentation/resources/image_paths.dart';
 import 'package:core/presentation/utils/app_toast.dart';
 import 'package:core/presentation/utils/responsive_utils.dart';
+import 'package:core/presentation/views/dialog/confirm_dialog_button.dart';
 import 'package:dartz/dartz.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart' hide SearchController, State;
@@ -12,12 +14,17 @@ import 'package:get/get.dart';
 import 'package:jmap_dart_client/jmap/account_id.dart';
 import 'package:jmap_dart_client/jmap/core/account/account.dart';
 import 'package:jmap_dart_client/jmap/core/id.dart';
+import 'package:jmap_dart_client/jmap/core/unsigned_int.dart';
 import 'package:jmap_dart_client/jmap/core/session/session.dart';
 import 'package:jmap_dart_client/jmap/mail/email/email.dart';
+import 'package:jmap_dart_client/jmap/mail/email/keyword_identifier.dart';
 import 'package:jmap_dart_client/jmap/mail/mailbox/mailbox.dart';
 import 'package:mockito/annotations.dart';
 import 'package:mockito/mockito.dart';
+import 'package:model/email/email_action_type.dart';
+import 'package:model/email/mark_star_action.dart';
 import 'package:model/email/presentation_email.dart';
+import 'package:model/email/read_actions.dart';
 import 'package:model/extensions/email_extension.dart';
 import 'package:model/extensions/email_id_extensions.dart';
 import 'package:model/extensions/mailbox_extension.dart';
@@ -30,12 +37,24 @@ import 'package:tmail_ui_user/features/caching/caching_manager.dart';
 import 'package:tmail_ui_user/features/composer/domain/usecases/send_email_interactor.dart';
 import 'package:tmail_ui_user/features/composer/presentation/manager/composer_manager.dart';
 import 'package:tmail_ui_user/features/download/presentation/controllers/download_controller.dart';
+import 'package:tmail_ui_user/features/email/domain/model/mark_read_action.dart';
+import 'package:tmail_ui_user/features/email/domain/model/move_action.dart';
+import 'package:tmail_ui_user/features/email/domain/model/move_to_mailbox_request.dart';
+import 'package:tmail_ui_user/features/email/domain/state/delete_email_permanently_state.dart';
+import 'package:tmail_ui_user/features/email/domain/state/delete_multiple_emails_permanently_state.dart';
+import 'package:tmail_ui_user/features/email/domain/state/mark_as_email_read_state.dart';
+import 'package:tmail_ui_user/features/email/domain/state/mark_as_email_star_state.dart';
+import 'package:tmail_ui_user/features/email/domain/state/move_to_mailbox_state.dart';
+import 'package:tmail_ui_user/features/email/domain/usecases/add_a_label_to_a_thread_interactor.dart';
 import 'package:tmail_ui_user/features/email/domain/usecases/delete_email_permanently_interactor.dart';
 import 'package:tmail_ui_user/features/email/domain/usecases/delete_multiple_emails_permanently_interactor.dart';
+import 'package:tmail_ui_user/features/email/domain/usecases/get_email_content_interactor.dart';
 import 'package:tmail_ui_user/features/email/domain/usecases/get_restored_deleted_message_interactor.dart';
+import 'package:tmail_ui_user/features/email/domain/usecases/labels/remove_a_label_from_a_thread_interactor.dart';
 import 'package:tmail_ui_user/features/email/domain/usecases/mark_as_email_read_interactor.dart';
 import 'package:tmail_ui_user/features/email/domain/usecases/mark_as_star_email_interactor.dart';
 import 'package:tmail_ui_user/features/email/domain/usecases/move_to_mailbox_interactor.dart';
+import 'package:tmail_ui_user/features/email/domain/usecases/print_email_interactor.dart';
 import 'package:tmail_ui_user/features/email/domain/usecases/restore_deleted_message_interactor.dart';
 import 'package:tmail_ui_user/features/email/domain/usecases/unsubscribe_email_interactor.dart';
 import 'package:tmail_ui_user/features/home/domain/usecases/get_session_interactor.dart';
@@ -75,6 +94,7 @@ import 'package:tmail_ui_user/features/mailbox/presentation/model/mailbox_tree_b
 import 'package:tmail_ui_user/features/mailbox/presentation/widgets/mailbox_item_widget.dart';
 import 'package:tmail_ui_user/features/mailbox_creator/domain/usecases/verify_name_interactor.dart';
 import 'package:tmail_ui_user/features/mailbox_dashboard/domain/model/spam_report_state.dart';
+import 'package:tmail_ui_user/features/mailbox_dashboard/domain/state/get_all_recent_search_latest_state.dart';
 import 'package:tmail_ui_user/features/mailbox_dashboard/domain/usecases/get_all_composer_cache_interactor.dart';
 import 'package:tmail_ui_user/features/mailbox_dashboard/domain/usecases/get_all_recent_search_latest_interactor.dart';
 import 'package:tmail_ui_user/features/mailbox_dashboard/domain/usecases/get_stored_email_sort_order_interactor.dart';
@@ -90,6 +110,7 @@ import 'package:tmail_ui_user/features/mailbox_dashboard/presentation/controller
 import 'package:tmail_ui_user/features/mailbox_dashboard/presentation/controller/search_controller.dart';
 import 'package:tmail_ui_user/features/mailbox_dashboard/presentation/controller/spam_report_controller.dart';
 import 'package:tmail_ui_user/features/mailbox_dashboard/presentation/mailbox_dashboard_view_web.dart';
+import 'package:tmail_ui_user/features/mailbox_dashboard/presentation/model/dashboard_routes.dart';
 import 'package:tmail_ui_user/features/manage_account/data/local/language_cache_manager.dart';
 import 'package:tmail_ui_user/features/manage_account/domain/usecases/get_all_identities_interactor.dart';
 import 'package:tmail_ui_user/features/manage_account/domain/usecases/log_out_oidc_interactor.dart';
@@ -101,10 +122,15 @@ import 'package:tmail_ui_user/features/sending_queue/domain/usecases/delete_send
 import 'package:tmail_ui_user/features/sending_queue/domain/usecases/get_all_sending_email_interactor.dart';
 import 'package:tmail_ui_user/features/sending_queue/domain/usecases/store_sending_email_interactor.dart';
 import 'package:tmail_ui_user/features/sending_queue/domain/usecases/update_sending_email_interactor.dart';
+import 'package:tmail_ui_user/features/search/email/domain/usecases/refresh_changes_search_email_interactor.dart';
+import 'package:tmail_ui_user/features/search/email/presentation/search_email_controller.dart';
 import 'package:tmail_ui_user/features/thread/domain/constants/thread_constants.dart';
 import 'package:tmail_ui_user/features/thread/domain/model/filter_message_option.dart';
 import 'package:tmail_ui_user/features/thread/domain/state/get_all_email_state.dart';
 import 'package:tmail_ui_user/features/thread/domain/state/load_more_emails_state.dart';
+import 'package:tmail_ui_user/features/thread/domain/state/mark_as_multiple_email_read_state.dart';
+import 'package:tmail_ui_user/features/thread/domain/state/mark_as_star_multiple_email_state.dart';
+import 'package:tmail_ui_user/features/thread/domain/state/move_multiple_email_to_mailbox_state.dart';
 import 'package:tmail_ui_user/features/thread/domain/usecases/clean_and_get_emails_in_mailbox_interactor.dart';
 import 'package:tmail_ui_user/features/thread/domain/usecases/empty_spam_folder_interactor.dart';
 import 'package:tmail_ui_user/features/thread/domain/usecases/get_email_by_id_interactor.dart';
@@ -118,6 +144,11 @@ import 'package:tmail_ui_user/features/thread/domain/usecases/search_email_inter
 import 'package:tmail_ui_user/features/thread/domain/usecases/search_more_email_interactor.dart';
 import 'package:tmail_ui_user/features/thread/presentation/thread_controller.dart';
 import 'package:tmail_ui_user/features/thread/presentation/thread_view.dart';
+import 'package:tmail_ui_user/features/thread_detail/domain/usecases/get_emails_by_ids_interactor.dart';
+import 'package:tmail_ui_user/features/thread_detail/domain/usecases/get_thread_by_id_interactor.dart';
+import 'package:tmail_ui_user/features/thread_detail/presentation/action/thread_detail_ui_action.dart';
+import 'package:tmail_ui_user/features/thread_detail/presentation/thread_detail_controller.dart';
+import 'package:tmail_ui_user/features/thread_detail/presentation/thread_detail_manager.dart';
 import 'package:tmail_ui_user/main/bindings/network/binding_tag.dart';
 import 'package:tmail_ui_user/main/localizations/app_localizations.dart';
 import 'package:tmail_ui_user/main/localizations/app_localizations_delegate.dart';
@@ -139,6 +170,36 @@ const fallbackGenerators = {
   #onStart: mockControllerCallback,
   #onDelete: mockControllerCallback,
 };
+
+class _MockRefreshChangesSearchEmailInteractor extends Mock
+    implements RefreshChangesSearchEmailInteractor {}
+
+class _MockDownloadManager extends Mock implements DownloadManager {}
+
+class _MockGetThreadByIdInteractor extends Mock
+    implements GetThreadByIdInteractor {}
+
+class _MockGetEmailsByIdsInteractor extends Mock
+    implements GetEmailsByIdsInteractor {}
+
+class _MockPrintEmailInteractor extends Mock implements PrintEmailInteractor {}
+
+class _MockGetEmailContentInteractor extends Mock
+    implements GetEmailContentInteractor {}
+
+class _MockAddALabelToAThreadInteractor extends Mock
+    implements AddALabelToAThreadInteractor {}
+
+class _MockRemoveALabelFromAThreadInteractor extends Mock
+    implements RemoveALabelFromAThreadInteractor {}
+
+class _MockThreadDetailManager extends Mock implements ThreadDetailManager {
+  @override
+  InternalFinalCallback<void> get onStart => mockControllerCallback();
+
+  @override
+  InternalFinalCallback<void> get onDelete => mockControllerCallback();
+}
 
 @GenerateNiceMocks([
   MockSpec<MoveToMailboxInteractor>(),
@@ -1070,6 +1131,16 @@ void main() {
         expect(condition(), isTrue);
       }
 
+      void reloadTest(String description, Future<void> Function() body) {
+        testWidgets(description, (tester) async {
+          await body();
+          await tester.pumpWidget(
+            makeTestableWidget(child: const SizedBox.shrink()),
+          );
+          await tester.pump();
+        });
+      }
+
       setUp(() async {
         reset(getAllMailboxInteractor);
         final realTreeBuilder = TreeBuilder();
@@ -1198,7 +1269,7 @@ void main() {
         reset(getAllMailboxInteractor);
       });
 
-      test(
+      reloadTest(
         'preserves the delegated MailboxKey and selects its refreshed object',
         () async {
           final delegatedKey = MailboxKey(
@@ -1231,7 +1302,7 @@ void main() {
         },
       );
 
-      test(
+      reloadTest(
         'falls back to primary Inbox when delegated key disappears',
         () async {
           final delegatedKey = MailboxKey(
@@ -1258,7 +1329,7 @@ void main() {
         },
       );
 
-      test('keeps primary Inbox selected as primary', () async {
+      reloadTest('keeps primary Inbox selected as primary', () async {
         final primaryKey = MailboxKey(
           AccountFixtures.aliceAccountId,
           primaryInbox.id,
@@ -1292,7 +1363,7 @@ void main() {
         );
       });
 
-      test(
+      reloadTest(
         'leaves an account-less virtual mailbox selection unchanged',
         () async {
           mailboxDashboardController.setSelectedMailbox(
@@ -1315,6 +1386,1854 @@ void main() {
           expect(
             mailboxDashboardController.selectedMailbox.value,
             same(PresentationMailbox.favoriteFolder),
+          );
+        },
+      );
+    });
+
+    group('Batch 2A account-scoped completion reconciliation', () {
+      final primaryAccountId = AccountFixtures.aliceAccountId;
+      final delegatedAccountId = AccountId(Id('batch-2a-delegated'));
+      final sourceMailboxId = MailboxId(Id('batch-2a-source'));
+      final destinationMailboxId = MailboxId(Id('batch-2a-destination'));
+      final sameEmailId = EmailId(Id('batch-2a-same-email'));
+      final secondEmailId = EmailId(Id('batch-2a-second-email'));
+      final untouchedEmailId = EmailId(Id('batch-2a-untouched-email'));
+
+      PresentationMailbox makeMailbox(
+        AccountId accountId,
+        MailboxId mailboxId, {
+        required String name,
+        int total = 10,
+        int unread = 5,
+      }) =>
+          PresentationMailbox(
+            mailboxId,
+            accountId: accountId,
+            isSharedAccount: accountId == delegatedAccountId,
+            name: MailboxName(name),
+            totalEmails: TotalEmails(UnsignedInt(total)),
+            unreadEmails: UnreadEmails(UnsignedInt(unread)),
+          );
+
+      void installScopedMailboxTree() {
+        final mailboxes = [
+          makeMailbox(
+            primaryAccountId,
+            sourceMailboxId,
+            name: 'Primary source',
+          ),
+          makeMailbox(
+            primaryAccountId,
+            destinationMailboxId,
+            name: 'Primary destination',
+            total: 2,
+            unread: 1,
+          ),
+          makeMailbox(
+            delegatedAccountId,
+            sourceMailboxId,
+            name: 'Delegated source',
+          ),
+          makeMailbox(
+            delegatedAccountId,
+            destinationMailboxId,
+            name: 'Delegated destination',
+            total: 2,
+            unread: 1,
+          ),
+        ];
+        final root = MailboxNode.root();
+        for (final mailbox in mailboxes) {
+          root.addChildNode(MailboxNode(mailbox));
+        }
+        mailboxController.updateMailboxTree(
+          mailboxCollection: MailboxCollection(
+            allMailboxes: mailboxes,
+            defaultTree: MailboxTree(root),
+            personalTree: MailboxTree(MailboxNode.root()),
+            teamMailboxTree: MailboxTree(MailboxNode.root()),
+          ),
+          isRefreshTrigger: false,
+        );
+      }
+
+      PresentationMailbox mailboxFor(
+        AccountId accountId,
+        MailboxId mailboxId,
+      ) =>
+          mailboxController.defaultMailboxTree.value
+              .findNodeByKey(MailboxKey(accountId, mailboxId))!
+              .item;
+
+      int totalFor(AccountId accountId, MailboxId mailboxId) =>
+          mailboxFor(accountId, mailboxId).totalEmails!.value.value.toInt();
+
+      int unreadFor(AccountId accountId, MailboxId mailboxId) =>
+          mailboxFor(accountId, mailboxId).unreadEmails!.value.value.toInt();
+
+      PresentationEmail emailFor(
+        PresentationMailbox mailbox,
+        EmailId emailId,
+      ) =>
+          PresentationEmail(
+            id: emailId,
+            keywords: <KeyWordIdentifier, bool>{},
+            mailboxIds: {mailbox.id: true},
+            mailboxContain: mailbox,
+          );
+
+      Session sessionWithDelegatedAccount() {
+        final baseSession = SessionFixtures.aliceSession;
+        final primaryAccount = baseSession.accounts[primaryAccountId]!;
+        return Session(
+          baseSession.capabilities,
+          {
+            ...baseSession.accounts,
+            delegatedAccountId: Account(
+              AccountName('batch-2a-delegate@domain.tld'),
+              false,
+              false,
+              primaryAccount.accountCapabilities,
+            ),
+          },
+          baseSession.primaryAccounts,
+          baseSession.username,
+          baseSession.apiUrl,
+          baseSession.downloadUrl,
+          baseSession.uploadUrl,
+          baseSession.eventSourceUrl,
+          baseSession.state,
+        );
+      }
+
+      Function captureUndoCallback() =>
+          verify(
+                appToast.showToastMessage(
+                  any,
+                  any,
+                  actionName: anyNamed('actionName'),
+                  onActionClick: captureAnyNamed('onActionClick'),
+                  actionIcon: anyNamed('actionIcon'),
+                  leadingSVGIcon: anyNamed('leadingSVGIcon'),
+                  leadingSVGIconColor: anyNamed('leadingSVGIconColor'),
+                  backgroundColor: anyNamed('backgroundColor'),
+                  textColor: anyNamed('textColor'),
+                ),
+              ).captured.single
+              as Function;
+
+      setUp(() {
+        installScopedMailboxTree();
+        mailboxDashboardController.sessionCurrent = sessionWithDelegatedAccount();
+        mailboxDashboardController.emailsInCurrentMailbox.clear();
+        mailboxDashboardController.clearSelectedEmail();
+        clearInteractions(appToast);
+        clearInteractions(moveToMailboxInteractor);
+        clearInteractions(moveMultipleEmailToMailboxInteractor);
+      });
+
+      void controllerTest(String description, void Function() body) {
+        testWidgets(description, (tester) async {
+          await tester.pumpWidget(
+            makeTestableWidget(child: const SizedBox.shrink()),
+          );
+          await tester.pump();
+          body();
+        });
+      }
+
+      SearchEmailController registerSearchEmailController() {
+        when(
+          getAllRecentSearchLatestInteractor.execute(
+            any,
+            any,
+            pattern: anyNamed('pattern'),
+          ),
+        ).thenAnswer(
+          (_) async => Right(GetAllRecentSearchLatestSuccess([])),
+        );
+        final controller = SearchEmailController(
+          quickSearchEmailInteractor,
+          saveRecentSearchInteractor,
+          getAllRecentSearchLatestInteractor,
+          searchEmailInteractor,
+          searchMoreEmailInteractor,
+          _MockRefreshChangesSearchEmailInteractor(),
+        );
+        Get.put<SearchEmailController>(controller);
+        return controller;
+      }
+
+      ThreadDetailController registerThreadDetailController() {
+        Get.put<DownloadManager>(_MockDownloadManager());
+        Get.put<ThreadDetailManager>(_MockThreadDetailManager());
+        final controller = ThreadDetailController(
+          _MockGetThreadByIdInteractor(),
+          _MockGetEmailsByIdsInteractor(),
+          markAsEmailReadInteractor,
+          markAsStarEmailInteractor,
+          _MockPrintEmailInteractor(),
+          _MockGetEmailContentInteractor(),
+          markAsStarMultipleEmailInteractor,
+          markAsMultipleEmailReadInteractor,
+          _MockAddALabelToAThreadInteractor(),
+          _MockRemoveALabelFromAThreadInteractor(),
+        );
+        Get.put<ThreadDetailController>(controller);
+        return controller;
+      }
+
+      void activatePrimarySearch({
+        required List<PresentationEmail> searchEmails,
+        required List<PresentationEmail> backgroundEmails,
+      }) {
+        final primarySource = mailboxFor(primaryAccountId, sourceMailboxId);
+        final primaryDestination = mailboxFor(
+          primaryAccountId,
+          destinationMailboxId,
+        );
+        mailboxDashboardController.setMapMailboxById({
+          sourceMailboxId: primarySource,
+          destinationMailboxId: primaryDestination,
+        });
+        mailboxDashboardController.setSelectedMailbox(
+          mailboxFor(delegatedAccountId, sourceMailboxId),
+        );
+        mailboxDashboardController.updateEmailList(backgroundEmails);
+        mailboxDashboardController.listResultSearch.assignAll(searchEmails);
+        searchController.activateSimpleSearch();
+        mailboxDashboardController.dispatchRoute(DashboardRoutes.searchEmail);
+      }
+
+      Future<SearchEmailController> preparePrimarySearchDispatch(
+        WidgetTester tester, {
+        required List<PresentationEmail> searchEmails,
+        required List<PresentationEmail> backgroundEmails,
+      }) async {
+        final searchEmailController = registerSearchEmailController();
+        await tester.pumpWidget(
+          makeTestableWidget(child: const SizedBox.shrink()),
+        );
+        await tester.pump();
+        searchEmailController.searchIsRunning.value = true;
+        activatePrimarySearch(
+          searchEmails: searchEmails,
+          backgroundEmails: backgroundEmails,
+        );
+        return searchEmailController;
+      }
+
+      controllerTest(
+        'delegated move completion updates only delegated same-id counters',
+        () {
+          mailboxDashboardController.setSelectedMailbox(
+            mailboxFor(primaryAccountId, sourceMailboxId),
+          );
+
+          mailboxDashboardController.onData(
+            Right(
+              MoveToMailboxSuccess(
+                sameEmailId,
+                sourceMailboxId,
+                destinationMailboxId,
+                MoveAction.moving,
+                EmailActionType.moveToMailbox,
+                accountId: delegatedAccountId,
+                originalMailboxIdsWithEmailIds: {
+                  sourceMailboxId: [sameEmailId],
+                },
+                emailIdsWithReadStatus: {sameEmailId: false},
+              ),
+            ),
+          );
+
+          expect(totalFor(delegatedAccountId, sourceMailboxId), 9);
+          expect(unreadFor(delegatedAccountId, sourceMailboxId), 4);
+          expect(totalFor(delegatedAccountId, destinationMailboxId), 3);
+          expect(unreadFor(delegatedAccountId, destinationMailboxId), 2);
+          expect(totalFor(primaryAccountId, sourceMailboxId), 10);
+          expect(unreadFor(primaryAccountId, sourceMailboxId), 5);
+          expect(totalFor(primaryAccountId, destinationMailboxId), 2);
+          expect(unreadFor(primaryAccountId, destinationMailboxId), 1);
+        },
+      );
+
+      controllerTest('primary move completion retains primary counter behavior', () {
+        mailboxDashboardController.setSelectedMailbox(
+          mailboxFor(delegatedAccountId, sourceMailboxId),
+        );
+
+        mailboxDashboardController.onData(
+          Right(
+            MoveToMailboxSuccess(
+              sameEmailId,
+              sourceMailboxId,
+              destinationMailboxId,
+              MoveAction.moving,
+              EmailActionType.moveToMailbox,
+              accountId: primaryAccountId,
+              originalMailboxIdsWithEmailIds: {
+                sourceMailboxId: [sameEmailId],
+              },
+              emailIdsWithReadStatus: {sameEmailId: true},
+            ),
+          ),
+        );
+
+        expect(totalFor(primaryAccountId, sourceMailboxId), 9);
+        expect(unreadFor(primaryAccountId, sourceMailboxId), 5);
+        expect(totalFor(primaryAccountId, destinationMailboxId), 3);
+        expect(unreadFor(primaryAccountId, destinationMailboxId), 1);
+        expect(totalFor(delegatedAccountId, sourceMailboxId), 10);
+        expect(unreadFor(delegatedAccountId, sourceMailboxId), 5);
+        expect(totalFor(delegatedAccountId, destinationMailboxId), 2);
+        expect(unreadFor(delegatedAccountId, destinationMailboxId), 1);
+      });
+
+      controllerTest(
+        'delegated read completion updates only delegated unread count',
+        () {
+        mailboxDashboardController.setSelectedMailbox(
+          mailboxFor(primaryAccountId, sourceMailboxId),
+        );
+
+        mailboxDashboardController.onData(
+          Right(
+            MarkAsEmailReadSuccess(
+              sameEmailId,
+              ReadActions.markAsRead,
+              MarkReadAction.tap,
+              sourceMailboxId,
+              accountId: delegatedAccountId,
+            ),
+          ),
+        );
+
+        expect(unreadFor(delegatedAccountId, sourceMailboxId), 4);
+        expect(unreadFor(primaryAccountId, sourceMailboxId), 5);
+        },
+      );
+
+      controllerTest(
+        'delegated permanent delete updates only delegated total',
+        () {
+          final delegatedMailbox = mailboxFor(
+            delegatedAccountId,
+            sourceMailboxId,
+          );
+          mailboxDashboardController.setSelectedMailbox(delegatedMailbox);
+          mailboxDashboardController.updateEmailList([
+            emailFor(delegatedMailbox, sameEmailId),
+          ]);
+
+          mailboxDashboardController.onData(
+            Right(
+              DeleteEmailPermanentlySuccess(
+                sameEmailId,
+                sourceMailboxId,
+                accountId: delegatedAccountId,
+              ),
+            ),
+          );
+
+          expect(mailboxDashboardController.emailsInCurrentMailbox, isEmpty);
+          expect(totalFor(delegatedAccountId, sourceMailboxId), 9);
+          expect(totalFor(primaryAccountId, sourceMailboxId), 10);
+        },
+      );
+
+      controllerTest(
+        'single read from account A cannot update same-id email in B',
+        () {
+        final mailboxB = mailboxFor(primaryAccountId, sourceMailboxId);
+        final emailB = emailFor(mailboxB, sameEmailId);
+        mailboxDashboardController.setSelectedMailbox(mailboxB);
+        mailboxDashboardController.updateEmailList([emailB]);
+        mailboxDashboardController.setSelectedEmail(emailB);
+
+        mailboxDashboardController.onData(
+          Right(
+            MarkAsEmailReadSuccess(
+              sameEmailId,
+              ReadActions.markAsRead,
+              MarkReadAction.tap,
+              sourceMailboxId,
+              accountId: delegatedAccountId,
+            ),
+          ),
+        );
+
+        expect(mailboxDashboardController.emailsInCurrentMailbox, [same(emailB)]);
+        expect(emailB.hasRead, isFalse);
+        expect(mailboxDashboardController.selectedEmail.value, same(emailB));
+        },
+      );
+
+      controllerTest(
+        'single star from account A cannot update same-id email in B',
+        () {
+        final mailboxB = mailboxFor(primaryAccountId, sourceMailboxId);
+        final emailB = emailFor(mailboxB, sameEmailId);
+        mailboxDashboardController.setSelectedMailbox(mailboxB);
+        mailboxDashboardController.updateEmailList([emailB]);
+        mailboxDashboardController.setSelectedEmail(emailB);
+
+        mailboxDashboardController.onData(
+          Right(
+            MarkAsStarEmailSuccess(
+              MarkStarAction.markStar,
+              sameEmailId,
+              accountId: delegatedAccountId,
+            ),
+          ),
+        );
+
+        expect(mailboxDashboardController.emailsInCurrentMailbox, [same(emailB)]);
+        expect(emailB.hasStarred, isFalse);
+        expect(mailboxDashboardController.selectedEmail.value, same(emailB));
+        },
+      );
+
+      controllerTest(
+        'single delete from account A cannot remove same-id email in B',
+        () {
+        final mailboxB = mailboxFor(primaryAccountId, sourceMailboxId);
+        final emailB = emailFor(mailboxB, sameEmailId);
+        mailboxDashboardController.setSelectedMailbox(mailboxB);
+        mailboxDashboardController.updateEmailList([emailB]);
+        mailboxDashboardController.setSelectedEmail(emailB);
+
+        mailboxDashboardController.onData(
+          Right(
+            DeleteEmailPermanentlySuccess(
+              sameEmailId,
+              sourceMailboxId,
+              accountId: delegatedAccountId,
+            ),
+          ),
+        );
+
+        expect(mailboxDashboardController.emailsInCurrentMailbox, [same(emailB)]);
+        expect(mailboxDashboardController.selectedEmail.value, same(emailB));
+        expect(
+          mailboxDashboardController.selectedMailbox.value?.totalEmails,
+          TotalEmails(UnsignedInt(10)),
+        );
+        },
+      );
+
+      controllerTest(
+        'bulk all-success cannot reconcile into another account',
+        () {
+        final mailboxB = mailboxFor(primaryAccountId, sourceMailboxId);
+        final firstEmailB = emailFor(mailboxB, sameEmailId);
+        final secondEmailB = emailFor(mailboxB, secondEmailId);
+        mailboxDashboardController.setSelectedMailbox(mailboxB);
+        mailboxDashboardController.updateEmailList([firstEmailB, secondEmailB]);
+
+        mailboxDashboardController.onData(
+          Right(
+            MarkAsStarMultipleEmailAllSuccess(
+              2,
+              MarkStarAction.markStar,
+              [sameEmailId, secondEmailId],
+              accountId: delegatedAccountId,
+            ),
+          ),
+        );
+
+        expect(firstEmailB.hasStarred, isFalse);
+        expect(secondEmailB.hasStarred, isFalse);
+        },
+      );
+
+      controllerTest(
+        'bulk partial-success uses its account and only successful email ids',
+        () {
+          final delegatedMailbox = mailboxFor(
+            delegatedAccountId,
+            sourceMailboxId,
+          );
+          final successfulEmail = emailFor(delegatedMailbox, sameEmailId);
+          final failedEmail = emailFor(delegatedMailbox, secondEmailId);
+          mailboxDashboardController.setSelectedMailbox(delegatedMailbox);
+          mailboxDashboardController.updateEmailList([
+            successfulEmail,
+            failedEmail,
+          ]);
+
+          mailboxDashboardController.onData(
+            Right(
+              MarkAsMultipleEmailReadHasSomeEmailFailure(
+                [sameEmailId],
+                ReadActions.markAsRead,
+                {
+                  sourceMailboxId: [sameEmailId],
+                },
+                accountId: delegatedAccountId,
+              ),
+            ),
+          );
+
+          expect(successfulEmail.hasRead, isTrue);
+          expect(failedEmail.hasRead, isFalse);
+          expect(unreadFor(delegatedAccountId, sourceMailboxId), 4);
+          expect(unreadFor(primaryAccountId, sourceMailboxId), 5);
+        },
+      );
+
+      controllerTest(
+        'completion after switching A to B leaves B list and selection intact',
+        () {
+          final mailboxA = mailboxFor(delegatedAccountId, sourceMailboxId);
+          mailboxDashboardController.setSelectedMailbox(mailboxA);
+          mailboxDashboardController.updateEmailList([
+            emailFor(mailboxA, sameEmailId),
+          ]);
+
+          final mailboxB = mailboxFor(primaryAccountId, sourceMailboxId);
+          final emailB = emailFor(mailboxB, sameEmailId);
+          mailboxDashboardController.setSelectedMailbox(mailboxB);
+          mailboxDashboardController.updateEmailList([emailB]);
+          mailboxDashboardController.setSelectedEmail(emailB);
+
+          mailboxDashboardController.onData(
+            Right(
+              MoveToMailboxSuccess(
+                sameEmailId,
+                sourceMailboxId,
+                destinationMailboxId,
+                MoveAction.moving,
+                EmailActionType.moveToMailbox,
+                accountId: delegatedAccountId,
+                originalMailboxIdsWithEmailIds: {
+                  sourceMailboxId: [sameEmailId],
+                },
+                emailIdsWithReadStatus: {sameEmailId: true},
+              ),
+            ),
+          );
+
+          expect(mailboxDashboardController.emailsInCurrentMailbox, [same(emailB)]);
+          expect(mailboxDashboardController.selectedEmail.value, same(emailB));
+          expect(mailboxDashboardController.selectedMailbox.value?.key, mailboxB.key);
+          expect(
+            mailboxDashboardController.selectedMailbox.value?.totalEmails,
+            TotalEmails(UnsignedInt(10)),
+          );
+        },
+      );
+
+      group('Search account-scoped completion reconciliation', () {
+        group('Search real action dispatch', () {
+          testWidgets(
+            'mark-read dispatches through primary and reconciles only Search',
+            (tester) async {
+              final primarySource = mailboxFor(
+                primaryAccountId,
+                sourceMailboxId,
+              );
+              final delegatedSource = mailboxFor(
+                delegatedAccountId,
+                sourceMailboxId,
+              );
+              final primarySearchEmail = emailFor(primarySource, sameEmailId);
+              final delegatedBackgroundEmail = emailFor(
+                delegatedSource,
+                sameEmailId,
+              );
+              final searchEmailController = await preparePrimarySearchDispatch(
+                tester,
+                searchEmails: [primarySearchEmail],
+                backgroundEmails: [delegatedBackgroundEmail],
+              );
+              late AccountId dispatchedAccountId;
+              when(
+                markAsEmailReadInteractor.execute(
+                  any,
+                  any,
+                  any,
+                  any,
+                  any,
+                  any,
+                ),
+              ).thenAnswer((invocation) {
+                dispatchedAccountId =
+                    invocation.positionalArguments[1] as AccountId;
+                return Stream.value(
+                  Right(
+                    MarkAsEmailReadSuccess(
+                      sameEmailId,
+                      ReadActions.markAsRead,
+                      MarkReadAction.tap,
+                      sourceMailboxId,
+                      accountId: dispatchedAccountId,
+                    ),
+                  ),
+                );
+              });
+
+              searchEmailController.pressEmailAction(
+                EmailActionType.markAsRead,
+                primarySearchEmail,
+                primarySource,
+              );
+
+              expect(
+                dispatchedAccountId,
+                primaryAccountId,
+                reason: 'Search read must not use the delegated background account',
+              );
+              await tester.pumpAndSettle();
+              expect(primarySearchEmail.hasRead, isTrue);
+              expect(delegatedBackgroundEmail.hasRead, isFalse);
+              expect(
+                mailboxDashboardController.emailsInCurrentMailbox,
+                [same(delegatedBackgroundEmail)],
+              );
+            },
+          );
+
+          testWidgets(
+            'star dispatches through primary and reconciles only Search',
+            (tester) async {
+              final primarySource = mailboxFor(
+                primaryAccountId,
+                sourceMailboxId,
+              );
+              final delegatedSource = mailboxFor(
+                delegatedAccountId,
+                sourceMailboxId,
+              );
+              final primarySearchEmail = emailFor(primarySource, sameEmailId);
+              final delegatedBackgroundEmail = emailFor(
+                delegatedSource,
+                sameEmailId,
+              );
+              final searchEmailController = await preparePrimarySearchDispatch(
+                tester,
+                searchEmails: [primarySearchEmail],
+                backgroundEmails: [delegatedBackgroundEmail],
+              );
+              late AccountId dispatchedAccountId;
+              when(
+                markAsStarEmailInteractor.execute(any, any, any, any),
+              ).thenAnswer((invocation) {
+                dispatchedAccountId =
+                    invocation.positionalArguments[1] as AccountId;
+                return Stream.value(
+                  Right(
+                    MarkAsStarEmailSuccess(
+                      MarkStarAction.markStar,
+                      sameEmailId,
+                      accountId: dispatchedAccountId,
+                    ),
+                  ),
+                );
+              });
+
+              searchEmailController.pressEmailAction(
+                EmailActionType.markAsStarred,
+                primarySearchEmail,
+                primarySource,
+              );
+
+              expect(
+                dispatchedAccountId,
+                primaryAccountId,
+                reason: 'Search star must not use the delegated background account',
+              );
+              await tester.pumpAndSettle();
+              expect(primarySearchEmail.hasStarred, isTrue);
+              expect(delegatedBackgroundEmail.hasStarred, isFalse);
+              expect(
+                mailboxDashboardController.emailsInCurrentMailbox,
+                [same(delegatedBackgroundEmail)],
+              );
+            },
+          );
+
+          testWidgets(
+            'single permanent delete dispatches through primary and removes only Search',
+            (tester) async {
+              final primarySource = mailboxFor(
+                primaryAccountId,
+                sourceMailboxId,
+              );
+              final delegatedSource = mailboxFor(
+                delegatedAccountId,
+                sourceMailboxId,
+              );
+              final primarySearchEmail = emailFor(primarySource, sameEmailId);
+              final delegatedBackgroundEmail = emailFor(
+                delegatedSource,
+                sameEmailId,
+              );
+              await preparePrimarySearchDispatch(
+                tester,
+                searchEmails: [primarySearchEmail],
+                backgroundEmails: [delegatedBackgroundEmail],
+              );
+              late AccountId dispatchedAccountId;
+              when(
+                deleteEmailPermanentlyInteractor.execute(
+                  any,
+                  any,
+                  any,
+                  any,
+                ),
+              ).thenAnswer((invocation) {
+                dispatchedAccountId =
+                    invocation.positionalArguments[1] as AccountId;
+                return Stream.value(
+                  Right(
+                    DeleteEmailPermanentlySuccess(
+                      sameEmailId,
+                      sourceMailboxId,
+                      accountId: dispatchedAccountId,
+                    ),
+                  ),
+                );
+              });
+
+              mailboxDashboardController.deleteEmailPermanently(
+                primarySearchEmail,
+              );
+
+              expect(dispatchedAccountId, primaryAccountId);
+              await tester.pumpAndSettle();
+              expect(mailboxDashboardController.listResultSearch, isEmpty);
+              expect(
+                mailboxDashboardController.emailsInCurrentMailbox,
+                [same(delegatedBackgroundEmail)],
+              );
+            },
+          );
+
+          testWidgets(
+            'partial bulk permanent delete removes only successful Search ids',
+            (tester) async {
+              final primarySource = mailboxFor(
+                primaryAccountId,
+                sourceMailboxId,
+              );
+              final delegatedSource = mailboxFor(
+                delegatedAccountId,
+                sourceMailboxId,
+              );
+              final firstPrimaryEmail = emailFor(primarySource, sameEmailId);
+              final secondPrimaryEmail = emailFor(primarySource, secondEmailId);
+              final failedPrimaryEmail = emailFor(
+                primarySource,
+                untouchedEmailId,
+              );
+              final delegatedBackgroundEmail = emailFor(
+                delegatedSource,
+                sameEmailId,
+              );
+              final searchEmailController = await preparePrimarySearchDispatch(
+                tester,
+                searchEmails: [
+                  firstPrimaryEmail,
+                  secondPrimaryEmail,
+                  failedPrimaryEmail,
+                ],
+                backgroundEmails: [delegatedBackgroundEmail],
+              );
+              late AccountId dispatchedAccountId;
+              late List<EmailId> requestedEmailIds;
+              when(
+                deleteMultipleEmailsPermanentlyInteractor.execute(
+                  any,
+                  any,
+                  any,
+                  any,
+                ),
+              ).thenAnswer((invocation) {
+                dispatchedAccountId =
+                    invocation.positionalArguments[1] as AccountId;
+                requestedEmailIds = List<EmailId>.from(
+                  invocation.positionalArguments[2] as List<EmailId>,
+                );
+                return Stream.value(
+                  Right(
+                    DeleteMultipleEmailsPermanentlyHasSomeEmailFailure(
+                      [sameEmailId, secondEmailId],
+                      sourceMailboxId,
+                      accountId: dispatchedAccountId,
+                    ),
+                  ),
+                );
+              });
+
+              searchEmailController.handleSelectionEmailAction(
+                EmailActionType.deletePermanently,
+                [firstPrimaryEmail, secondPrimaryEmail, failedPrimaryEmail],
+              );
+              await tester.pumpAndSettle();
+              final dialog = find.byKey(
+                const Key('confirm_dialog_delete_emails_permanently'),
+              );
+              expect(dialog, findsOneWidget);
+              final dialogButtons = find.descendant(
+                of: dialog,
+                matching: find.byType(ConfirmDialogButton),
+              );
+              expect(dialogButtons, findsNWidgets(2));
+              await tester.tap(dialogButtons.last);
+              await tester.pumpAndSettle();
+
+              expect(dispatchedAccountId, primaryAccountId);
+              expect(
+                requestedEmailIds,
+                [sameEmailId, secondEmailId, untouchedEmailId],
+              );
+              expect(
+                mailboxDashboardController.listResultSearch
+                    .map((email) => email.id),
+                [untouchedEmailId],
+              );
+              expect(
+                mailboxDashboardController.emailsInCurrentMailbox,
+                [same(delegatedBackgroundEmail)],
+              );
+            },
+          );
+
+          testWidgets(
+            'single move-to-trash dispatches through primary and updates Search',
+            (tester) async {
+              final primarySource = mailboxFor(
+                primaryAccountId,
+                sourceMailboxId,
+              );
+              final primaryDestination = mailboxFor(
+                primaryAccountId,
+                destinationMailboxId,
+              );
+              final delegatedSource = mailboxFor(
+                delegatedAccountId,
+                sourceMailboxId,
+              );
+              final primarySearchEmail = emailFor(primarySource, sameEmailId);
+              final delegatedBackgroundEmail = emailFor(
+                delegatedSource,
+                sameEmailId,
+              );
+              final searchEmailController = await preparePrimarySearchDispatch(
+                tester,
+                searchEmails: [primarySearchEmail],
+                backgroundEmails: [delegatedBackgroundEmail],
+              );
+              mailboxDashboardController.setMapDefaultMailboxIdByRole({
+                PresentationMailbox.roleTrash: destinationMailboxId,
+              });
+              late AccountId dispatchedAccountId;
+              late MoveToMailboxRequest dispatchedRequest;
+              when(
+                moveToMailboxInteractor.execute(any, any, any, any),
+              ).thenAnswer((invocation) {
+                dispatchedAccountId =
+                    invocation.positionalArguments[1] as AccountId;
+                dispatchedRequest =
+                    invocation.positionalArguments[2] as MoveToMailboxRequest;
+                final emailIdsWithReadStatus = invocation.positionalArguments[3]
+                    as Map<EmailId, bool>;
+                return Stream.value(
+                  Right(
+                    MoveToMailboxSuccess(
+                      sameEmailId,
+                      sourceMailboxId,
+                      dispatchedRequest.destinationMailboxId,
+                      dispatchedRequest.moveAction,
+                      dispatchedRequest.emailActionType,
+                      accountId: dispatchedAccountId,
+                      originalMailboxIdsWithEmailIds:
+                          dispatchedRequest.currentMailboxes,
+                      emailIdsWithReadStatus: emailIdsWithReadStatus,
+                    ),
+                  ),
+                );
+              });
+
+              searchEmailController.pressEmailAction(
+                EmailActionType.moveToTrash,
+                primarySearchEmail,
+                primarySource,
+              );
+
+              expect(
+                dispatchedAccountId,
+                primaryAccountId,
+                reason: 'Search move must use the source Search account',
+              );
+              expect(
+                dispatchedRequest.destinationMailboxId,
+                destinationMailboxId,
+              );
+              await tester.pumpAndSettle();
+              final reconciledSearchEmail = mailboxDashboardController
+                  .listResultSearch
+                  .singleWhere((email) => email.id == sameEmailId);
+              expect(
+                reconciledSearchEmail.mailboxContain,
+                same(primaryDestination),
+              );
+              expect(
+                reconciledSearchEmail.mailboxIds,
+                {destinationMailboxId: true},
+              );
+              expect(delegatedBackgroundEmail.mailboxContain, same(delegatedSource));
+              expect(
+                delegatedBackgroundEmail.mailboxIds,
+                {sourceMailboxId: true},
+              );
+            },
+          );
+
+          testWidgets(
+            'bulk partial read dispatches through primary and filters successes',
+            (tester) async {
+              final primarySource = mailboxFor(
+                primaryAccountId,
+                sourceMailboxId,
+              );
+              final delegatedSource = mailboxFor(
+                delegatedAccountId,
+                sourceMailboxId,
+              );
+              final firstPrimaryEmail = emailFor(primarySource, sameEmailId);
+              final secondPrimaryEmail = emailFor(primarySource, secondEmailId);
+              final firstDelegatedEmail = emailFor(
+                delegatedSource,
+                sameEmailId,
+              );
+              final secondDelegatedEmail = emailFor(
+                delegatedSource,
+                secondEmailId,
+              );
+              final searchEmailController = await preparePrimarySearchDispatch(
+                tester,
+                searchEmails: [firstPrimaryEmail, secondPrimaryEmail],
+                backgroundEmails: [firstDelegatedEmail, secondDelegatedEmail],
+              );
+              late AccountId dispatchedAccountId;
+              late List<EmailId> requestedEmailIds;
+              when(
+                markAsMultipleEmailReadInteractor.execute(
+                  any,
+                  any,
+                  any,
+                  any,
+                  any,
+                ),
+              ).thenAnswer((invocation) {
+                dispatchedAccountId =
+                    invocation.positionalArguments[1] as AccountId;
+                requestedEmailIds = List<EmailId>.from(
+                  invocation.positionalArguments[2] as List<EmailId>,
+                );
+                return Stream.value(
+                  Right(
+                    MarkAsMultipleEmailReadHasSomeEmailFailure(
+                      [sameEmailId],
+                      ReadActions.markAsRead,
+                      {
+                        sourceMailboxId: [sameEmailId],
+                      },
+                      accountId: dispatchedAccountId,
+                    ),
+                  ),
+                );
+              });
+
+              searchEmailController.handleSelectionEmailAction(
+                EmailActionType.markAsRead,
+                [firstPrimaryEmail, secondPrimaryEmail],
+              );
+
+              expect(
+                dispatchedAccountId,
+                primaryAccountId,
+                reason: 'Bulk Search actions must use the Search account',
+              );
+              expect(requestedEmailIds, [sameEmailId, secondEmailId]);
+              await tester.pumpAndSettle();
+              final searchEmails = mailboxDashboardController.listResultSearch;
+              expect(
+                searchEmails
+                    .singleWhere((email) => email.id == sameEmailId)
+                    .hasRead,
+                isTrue,
+              );
+              expect(
+                searchEmails
+                    .singleWhere((email) => email.id == secondEmailId)
+                    .hasRead,
+                isFalse,
+              );
+              expect(firstDelegatedEmail.hasRead, isFalse);
+              expect(secondDelegatedEmail.hasRead, isFalse);
+            },
+          );
+
+          testWidgets(
+            'Search-origin detail read reconciles Search and detail only',
+            (tester) async {
+              final primarySource = mailboxFor(
+                primaryAccountId,
+                sourceMailboxId,
+              );
+              final delegatedSource = mailboxFor(
+                delegatedAccountId,
+                sourceMailboxId,
+              );
+              final primarySearchEmail = emailFor(primarySource, sameEmailId);
+              final delegatedBackgroundEmail = emailFor(
+                delegatedSource,
+                sameEmailId,
+              );
+              await preparePrimarySearchDispatch(
+                tester,
+                searchEmails: [primarySearchEmail],
+                backgroundEmails: [delegatedBackgroundEmail],
+              );
+              mailboxDashboardController.openEmailDetailedView(
+                primarySearchEmail,
+              );
+              late AccountId dispatchedAccountId;
+              when(
+                markAsEmailReadInteractor.execute(
+                  any,
+                  any,
+                  any,
+                  any,
+                  any,
+                  any,
+                ),
+              ).thenAnswer((invocation) {
+                dispatchedAccountId =
+                    invocation.positionalArguments[1] as AccountId;
+                return Stream.value(
+                  Right(
+                    MarkAsEmailReadSuccess(
+                      sameEmailId,
+                      ReadActions.markAsRead,
+                      MarkReadAction.tap,
+                      sourceMailboxId,
+                      accountId: dispatchedAccountId,
+                    ),
+                  ),
+                );
+              });
+
+              mailboxDashboardController.markAsEmailRead(
+                sameEmailId,
+                ReadActions.markAsRead,
+                MarkReadAction.tap,
+                sourceMailboxId,
+              );
+
+              expect(
+                mailboxDashboardController.dashboardRoute.value,
+                DashboardRoutes.threadDetailed,
+              );
+              expect(
+                dispatchedAccountId,
+                primaryAccountId,
+                reason: 'Search-origin thread detail must retain Search ownership',
+              );
+              await tester.pumpAndSettle();
+              expect(primarySearchEmail.hasRead, isTrue);
+              expect(
+                mailboxDashboardController.selectedEmail.value,
+                same(primarySearchEmail),
+              );
+              expect(
+                mailboxDashboardController.selectedEmail.value?.hasRead,
+                isTrue,
+              );
+              expect(delegatedBackgroundEmail.hasRead, isFalse);
+              expect(
+                mailboxDashboardController.emailsInCurrentMailbox,
+                [same(delegatedBackgroundEmail)],
+              );
+            },
+          );
+
+          testWidgets(
+            'Search-origin detail star reconciles Search and leaves background unchanged',
+            (tester) async {
+              final primarySource = mailboxFor(
+                primaryAccountId,
+                sourceMailboxId,
+              );
+              final delegatedSource = mailboxFor(
+                delegatedAccountId,
+                sourceMailboxId,
+              );
+              final primarySearchEmail = emailFor(primarySource, sameEmailId);
+              final delegatedBackgroundEmail = emailFor(
+                delegatedSource,
+                sameEmailId,
+              );
+              await preparePrimarySearchDispatch(
+                tester,
+                searchEmails: [primarySearchEmail],
+                backgroundEmails: [delegatedBackgroundEmail],
+              );
+              mailboxDashboardController.openEmailDetailedView(
+                primarySearchEmail,
+              );
+              late AccountId dispatchedAccountId;
+              when(
+                markAsStarEmailInteractor.execute(any, any, any, any),
+              ).thenAnswer((invocation) {
+                dispatchedAccountId =
+                    invocation.positionalArguments[1] as AccountId;
+                return Stream.value(
+                  Right(
+                    MarkAsStarEmailSuccess(
+                      MarkStarAction.markStar,
+                      sameEmailId,
+                      accountId: dispatchedAccountId,
+                    ),
+                  ),
+                );
+              });
+
+              mailboxDashboardController.markAsStarEmail(
+                primarySearchEmail,
+                MarkStarAction.markStar,
+              );
+
+              expect(dispatchedAccountId, primaryAccountId);
+              await tester.pumpAndSettle();
+              expect(primarySearchEmail.hasStarred, isTrue);
+              expect(
+                mailboxDashboardController.selectedEmail.value?.hasStarred,
+                isTrue,
+              );
+              expect(delegatedBackgroundEmail.hasStarred, isFalse);
+              expect(
+                mailboxDashboardController.emailsInCurrentMailbox,
+                [same(delegatedBackgroundEmail)],
+              );
+            },
+          );
+
+          testWidgets(
+            'Search-origin detail move reaches the real detail receiver',
+            (tester) async {
+              final primarySource = mailboxFor(
+                primaryAccountId,
+                sourceMailboxId,
+              );
+              final primaryDestination = mailboxFor(
+                primaryAccountId,
+                destinationMailboxId,
+              );
+              final delegatedSource = mailboxFor(
+                delegatedAccountId,
+                sourceMailboxId,
+              );
+              final primarySearchEmail = emailFor(primarySource, sameEmailId);
+              final delegatedBackgroundEmail = emailFor(
+                delegatedSource,
+                sameEmailId,
+              );
+              final searchEmailController = await preparePrimarySearchDispatch(
+                tester,
+                searchEmails: [primarySearchEmail],
+                backgroundEmails: [delegatedBackgroundEmail],
+              );
+              mailboxDashboardController.openEmailDetailedView(
+                primarySearchEmail,
+              );
+              final threadDetailController = registerThreadDetailController();
+              threadDetailController.emailIdsPresentation[sameEmailId] =
+                  primarySearchEmail;
+              mailboxDashboardController.setMapDefaultMailboxIdByRole({
+                PresentationMailbox.roleTrash: destinationMailboxId,
+              });
+              late AccountId dispatchedAccountId;
+              when(
+                moveToMailboxInteractor.execute(any, any, any, any),
+              ).thenAnswer((invocation) {
+                dispatchedAccountId =
+                    invocation.positionalArguments[1] as AccountId;
+                final request =
+                    invocation.positionalArguments[2] as MoveToMailboxRequest;
+                return Stream.value(
+                  Right(
+                    MoveToMailboxSuccess(
+                      sameEmailId,
+                      sourceMailboxId,
+                      request.destinationMailboxId,
+                      request.moveAction,
+                      request.emailActionType,
+                      accountId: dispatchedAccountId,
+                      originalMailboxIdsWithEmailIds: request.currentMailboxes,
+                      emailIdsWithReadStatus: const {},
+                    ),
+                  ),
+                );
+              });
+
+              searchEmailController.pressEmailAction(
+                EmailActionType.moveToTrash,
+                primarySearchEmail,
+                primarySource,
+              );
+
+              expect(dispatchedAccountId, primaryAccountId);
+              await tester.pumpAndSettle();
+              final reconciledSearchEmail = mailboxDashboardController
+                  .listResultSearch
+                  .singleWhere((email) => email.id == sameEmailId);
+              expect(reconciledSearchEmail.mailboxContain, same(primaryDestination));
+              expect(
+                reconciledSearchEmail.mailboxIds,
+                {destinationMailboxId: true},
+              );
+              expect(
+                threadDetailController
+                    .emailIdsPresentation[sameEmailId]
+                    ?.mailboxIds,
+                {destinationMailboxId: true},
+              );
+              expect(delegatedBackgroundEmail.mailboxContain, same(delegatedSource));
+              expect(
+                delegatedBackgroundEmail.mailboxIds,
+                {sourceMailboxId: true},
+              );
+            },
+          );
+
+          testWidgets(
+            'delegated non-Search read still dispatches through delegated',
+            (tester) async {
+              await tester.pumpWidget(
+                makeTestableWidget(child: const SizedBox.shrink()),
+              );
+              await tester.pump();
+              final delegatedSource = mailboxFor(
+                delegatedAccountId,
+                sourceMailboxId,
+              );
+              final delegatedEmail = emailFor(delegatedSource, sameEmailId);
+              searchController.disableAllSearchEmail();
+              mailboxDashboardController.dispatchRoute(DashboardRoutes.thread);
+              mailboxDashboardController.setSelectedMailbox(delegatedSource);
+              mailboxDashboardController.updateEmailList([delegatedEmail]);
+              late AccountId dispatchedAccountId;
+              when(
+                markAsEmailReadInteractor.execute(
+                  any,
+                  any,
+                  any,
+                  any,
+                  any,
+                  any,
+                ),
+              ).thenAnswer((invocation) {
+                dispatchedAccountId =
+                    invocation.positionalArguments[1] as AccountId;
+                return Stream.value(
+                  Right(
+                    MarkAsEmailReadSuccess(
+                      sameEmailId,
+                      ReadActions.markAsRead,
+                      MarkReadAction.tap,
+                      sourceMailboxId,
+                      accountId: dispatchedAccountId,
+                    ),
+                  ),
+                );
+              });
+
+              mailboxDashboardController.markAsEmailRead(
+                sameEmailId,
+                ReadActions.markAsRead,
+                MarkReadAction.tap,
+                sourceMailboxId,
+              );
+
+              expect(dispatchedAccountId, delegatedAccountId);
+              await tester.pumpAndSettle();
+              expect(delegatedEmail.hasRead, isTrue);
+            },
+          );
+
+          testWidgets(
+            'primary non-Search read still dispatches through primary',
+            (tester) async {
+              await tester.pumpWidget(
+                makeTestableWidget(child: const SizedBox.shrink()),
+              );
+              await tester.pump();
+              final primarySource = mailboxFor(
+                primaryAccountId,
+                sourceMailboxId,
+              );
+              final primaryEmail = emailFor(primarySource, sameEmailId);
+              searchController.disableAllSearchEmail();
+              mailboxDashboardController.dispatchRoute(DashboardRoutes.thread);
+              mailboxDashboardController.setSelectedMailbox(primarySource);
+              mailboxDashboardController.updateEmailList([primaryEmail]);
+              late AccountId dispatchedAccountId;
+              when(
+                markAsEmailReadInteractor.execute(
+                  any,
+                  any,
+                  any,
+                  any,
+                  any,
+                  any,
+                ),
+              ).thenAnswer((invocation) {
+                dispatchedAccountId =
+                    invocation.positionalArguments[1] as AccountId;
+                return Stream.value(
+                  Right(
+                    MarkAsEmailReadSuccess(
+                      sameEmailId,
+                      ReadActions.markAsRead,
+                      MarkReadAction.tap,
+                      sourceMailboxId,
+                      accountId: dispatchedAccountId,
+                    ),
+                  ),
+                );
+              });
+
+              mailboxDashboardController.markAsEmailRead(
+                sameEmailId,
+                ReadActions.markAsRead,
+                MarkReadAction.tap,
+                sourceMailboxId,
+              );
+
+              expect(dispatchedAccountId, primaryAccountId);
+              await tester.pumpAndSettle();
+              expect(primaryEmail.hasRead, isTrue);
+            },
+          );
+
+          controllerTest(
+            'delegated non-Search detail move still receives account A action',
+            () {
+              final delegatedSource = mailboxFor(
+                delegatedAccountId,
+                sourceMailboxId,
+              );
+              final delegatedEmail = emailFor(
+                delegatedSource,
+                sameEmailId,
+              );
+              searchController.disableAllSearchEmail();
+              mailboxDashboardController.setSelectedMailbox(delegatedSource);
+              mailboxDashboardController.updateEmailList([delegatedEmail]);
+              mailboxDashboardController.setSelectedEmail(delegatedEmail);
+              mailboxDashboardController.dispatchRoute(
+                DashboardRoutes.threadDetailed,
+              );
+
+              mailboxDashboardController.onData(
+                Right(
+                  MoveToMailboxSuccess(
+                    sameEmailId,
+                    sourceMailboxId,
+                    destinationMailboxId,
+                    MoveAction.moving,
+                    EmailActionType.moveToMailbox,
+                    accountId: delegatedAccountId,
+                    originalMailboxIdsWithEmailIds: {
+                      sourceMailboxId: [sameEmailId],
+                    },
+                    emailIdsWithReadStatus: {sameEmailId: true},
+                  ),
+                ),
+              );
+
+              final detailAction =
+                  mailboxDashboardController.threadDetailUIAction.value;
+              expect(detailAction, isA<EmailMovedAction>());
+              expect(
+                (detailAction as EmailMovedAction).emailId,
+                sameEmailId,
+              );
+            },
+          );
+        });
+
+        controllerTest(
+          'delegated read completion cannot update an equal-id primary search result',
+          () {
+            final primarySearchEmail = emailFor(
+              mailboxFor(primaryAccountId, sourceMailboxId),
+              sameEmailId,
+            );
+            final delegatedBackgroundEmail = emailFor(
+              mailboxFor(delegatedAccountId, sourceMailboxId),
+              sameEmailId,
+            );
+            activatePrimarySearch(
+              searchEmails: [primarySearchEmail],
+              backgroundEmails: [delegatedBackgroundEmail],
+            );
+
+            mailboxDashboardController.onData(
+              Right(
+                MarkAsEmailReadSuccess(
+                  sameEmailId,
+                  ReadActions.markAsRead,
+                  MarkReadAction.tap,
+                  sourceMailboxId,
+                  accountId: delegatedAccountId,
+                ),
+              ),
+            );
+
+            expect(primarySearchEmail.hasRead, isFalse);
+            expect(
+              mailboxDashboardController.emailsInCurrentMailbox,
+              [same(delegatedBackgroundEmail)],
+            );
+          },
+        );
+
+        controllerTest(
+          'delegated star completion cannot update an equal-id primary search result',
+          () {
+            final primarySearchEmail = emailFor(
+              mailboxFor(primaryAccountId, sourceMailboxId),
+              sameEmailId,
+            );
+            final delegatedBackgroundEmail = emailFor(
+              mailboxFor(delegatedAccountId, sourceMailboxId),
+              sameEmailId,
+            );
+            activatePrimarySearch(
+              searchEmails: [primarySearchEmail],
+              backgroundEmails: [delegatedBackgroundEmail],
+            );
+
+            mailboxDashboardController.onData(
+              Right(
+                MarkAsStarEmailSuccess(
+                  MarkStarAction.markStar,
+                  sameEmailId,
+                  accountId: delegatedAccountId,
+                ),
+              ),
+            );
+
+            expect(primarySearchEmail.hasStarred, isFalse);
+            expect(
+              mailboxDashboardController.emailsInCurrentMailbox,
+              [same(delegatedBackgroundEmail)],
+            );
+          },
+        );
+
+        controllerTest(
+          'primary read completion updates the intended primary search result',
+          () {
+            final primarySearchEmail = emailFor(
+              mailboxFor(primaryAccountId, sourceMailboxId),
+              sameEmailId,
+            );
+            final delegatedBackgroundEmail = emailFor(
+              mailboxFor(delegatedAccountId, sourceMailboxId),
+              sameEmailId,
+            );
+            activatePrimarySearch(
+              searchEmails: [primarySearchEmail],
+              backgroundEmails: [delegatedBackgroundEmail],
+            );
+
+            mailboxDashboardController.onData(
+              Right(
+                MarkAsEmailReadSuccess(
+                  sameEmailId,
+                  ReadActions.markAsRead,
+                  MarkReadAction.tap,
+                  sourceMailboxId,
+                  accountId: primaryAccountId,
+                ),
+              ),
+            );
+
+            expect(primarySearchEmail.hasRead, isTrue);
+            expect(
+              mailboxDashboardController.emailsInCurrentMailbox,
+              [same(delegatedBackgroundEmail)],
+            );
+          },
+        );
+
+        testWidgets(
+          'primary single move updates search and leaves equal-id delegated background unchanged',
+          (tester) async {
+            final searchEmailController = registerSearchEmailController();
+            await tester.pumpWidget(
+              makeTestableWidget(child: const SizedBox.shrink()),
+            );
+            await tester.pump();
+            searchEmailController.searchIsRunning.value = true;
+
+            final primarySource = mailboxFor(
+              primaryAccountId,
+              sourceMailboxId,
+            );
+            final delegatedSource = mailboxFor(
+              delegatedAccountId,
+              sourceMailboxId,
+            );
+            final primaryDestination = mailboxFor(
+              primaryAccountId,
+              destinationMailboxId,
+            );
+            activatePrimarySearch(
+              searchEmails: [emailFor(primarySource, sameEmailId)],
+              backgroundEmails: [emailFor(delegatedSource, sameEmailId)],
+            );
+
+            mailboxDashboardController.onData(
+              Right(
+                MoveToMailboxSuccess(
+                  sameEmailId,
+                  sourceMailboxId,
+                  destinationMailboxId,
+                  MoveAction.moving,
+                  EmailActionType.moveToMailbox,
+                  accountId: primaryAccountId,
+                  originalMailboxIdsWithEmailIds: {
+                    sourceMailboxId: [sameEmailId],
+                  },
+                  emailIdsWithReadStatus: {sameEmailId: true},
+                ),
+              ),
+            );
+            await tester.pump();
+
+            final searchEmail = mailboxDashboardController
+                .listResultSearch
+                .singleWhere((email) => email.id == sameEmailId);
+            final backgroundEmail = mailboxDashboardController
+                .emailsInCurrentMailbox
+                .singleWhere((email) => email.id == sameEmailId);
+            expect(searchEmail.mailboxContain, same(primaryDestination));
+            expect(searchEmail.mailboxIds, {destinationMailboxId: true});
+            expect(backgroundEmail.mailboxContain, same(delegatedSource));
+            expect(backgroundEmail.mailboxIds, {sourceMailboxId: true});
+          },
+        );
+
+        testWidgets(
+          'primary bulk all-success move updates requested search ids only',
+          (tester) async {
+            final searchEmailController = registerSearchEmailController();
+            await tester.pumpWidget(
+              makeTestableWidget(child: const SizedBox.shrink()),
+            );
+            await tester.pump();
+            searchEmailController.searchIsRunning.value = true;
+
+            final primarySource = mailboxFor(
+              primaryAccountId,
+              sourceMailboxId,
+            );
+            final delegatedSource = mailboxFor(
+              delegatedAccountId,
+              sourceMailboxId,
+            );
+            final primaryDestination = mailboxFor(
+              primaryAccountId,
+              destinationMailboxId,
+            );
+            activatePrimarySearch(
+              searchEmails: [
+                emailFor(primarySource, sameEmailId),
+                emailFor(primarySource, secondEmailId),
+                emailFor(primarySource, untouchedEmailId),
+              ],
+              backgroundEmails: [
+                emailFor(delegatedSource, sameEmailId),
+                emailFor(delegatedSource, secondEmailId),
+              ],
+            );
+
+            mailboxDashboardController.onData(
+              Right(
+                MoveMultipleEmailToMailboxAllSuccess(
+                  [sameEmailId, secondEmailId],
+                  destinationMailboxId,
+                  MoveAction.moving,
+                  EmailActionType.moveToMailbox,
+                  accountId: primaryAccountId,
+                  originalMailboxIdsWithEmailIds: {
+                    sourceMailboxId: [sameEmailId, secondEmailId],
+                  },
+                  emailIdsWithReadStatus: {
+                    sameEmailId: true,
+                    secondEmailId: false,
+                  },
+                ),
+              ),
+            );
+            await tester.pump();
+
+            final searchEmails = mailboxDashboardController.listResultSearch;
+            expect(
+              searchEmails.singleWhere((email) => email.id == sameEmailId).mailboxContain,
+              same(primaryDestination),
+            );
+            expect(
+              searchEmails.singleWhere((email) => email.id == secondEmailId).mailboxContain,
+              same(primaryDestination),
+            );
+            expect(
+              searchEmails.singleWhere((email) => email.id == untouchedEmailId).mailboxContain,
+              same(primarySource),
+            );
+            expect(
+              mailboxDashboardController.emailsInCurrentMailbox
+                  .every((email) => identical(email.mailboxContain, delegatedSource)),
+              isTrue,
+            );
+          },
+        );
+
+        testWidgets(
+          'primary partial move updates only successful search ids',
+          (tester) async {
+            final searchEmailController = registerSearchEmailController();
+            await tester.pumpWidget(
+              makeTestableWidget(child: const SizedBox.shrink()),
+            );
+            await tester.pump();
+            searchEmailController.searchIsRunning.value = true;
+
+            final primarySource = mailboxFor(
+              primaryAccountId,
+              sourceMailboxId,
+            );
+            final delegatedSource = mailboxFor(
+              delegatedAccountId,
+              sourceMailboxId,
+            );
+            final primaryDestination = mailboxFor(
+              primaryAccountId,
+              destinationMailboxId,
+            );
+            activatePrimarySearch(
+              searchEmails: [
+                emailFor(primarySource, sameEmailId),
+                emailFor(primarySource, secondEmailId),
+              ],
+              backgroundEmails: [
+                emailFor(delegatedSource, sameEmailId),
+                emailFor(delegatedSource, secondEmailId),
+              ],
+            );
+
+            mailboxDashboardController.onData(
+              Right(
+                MoveMultipleEmailToMailboxHasSomeEmailFailure(
+                  [sameEmailId],
+                  destinationMailboxId,
+                  MoveAction.moving,
+                  EmailActionType.moveToMailbox,
+                  accountId: primaryAccountId,
+                  originalMailboxIdsWithMoveSucceededEmailIds: {
+                    sourceMailboxId: [sameEmailId],
+                  },
+                  moveSucceededEmailIdsWithReadStatus: {
+                    sameEmailId: true,
+                  },
+                ),
+              ),
+            );
+            await tester.pump();
+
+            final searchEmails = mailboxDashboardController.listResultSearch;
+            expect(
+              searchEmails.singleWhere((email) => email.id == sameEmailId).mailboxContain,
+              same(primaryDestination),
+            );
+            expect(
+              searchEmails.singleWhere((email) => email.id == secondEmailId).mailboxContain,
+              same(primarySource),
+            );
+            expect(
+              mailboxDashboardController.emailsInCurrentMailbox
+                  .every((email) => identical(email.mailboxContain, delegatedSource)),
+              isTrue,
+            );
+          },
+        );
+      });
+
+      testWidgets(
+        'single move Undo retains account A after switching to B',
+        (tester) async {
+          final session = sessionWithDelegatedAccount();
+          mailboxDashboardController.sessionCurrent = session;
+          mailboxDashboardController.setSelectedMailbox(
+            mailboxFor(delegatedAccountId, sourceMailboxId),
+          );
+          await tester.pumpWidget(
+            makeTestableWidget(child: const SizedBox.shrink()),
+          );
+          await tester.pump();
+          clearInteractions(appToast);
+          when(
+            moveToMailboxInteractor.execute(any, any, any, any),
+          ).thenAnswer((_) => const Stream.empty());
+
+          mailboxDashboardController.onData(
+            Right(
+              MoveToMailboxSuccess(
+                sameEmailId,
+                sourceMailboxId,
+                destinationMailboxId,
+                MoveAction.moving,
+                EmailActionType.moveToMailbox,
+                accountId: delegatedAccountId,
+                originalMailboxIdsWithEmailIds: {
+                  sourceMailboxId: [sameEmailId],
+                },
+                emailIdsWithReadStatus: {sameEmailId: false},
+              ),
+            ),
+          );
+          final undoCallback = captureUndoCallback();
+
+          mailboxDashboardController.setSelectedMailbox(
+            mailboxFor(primaryAccountId, sourceMailboxId),
+          );
+          undoCallback();
+
+          verify(
+            moveToMailboxInteractor.execute(
+              session,
+              delegatedAccountId,
+              MoveToMailboxRequest(
+                {
+                  destinationMailboxId: [sameEmailId],
+                },
+                sourceMailboxId,
+                MoveAction.undo,
+                EmailActionType.moveToMailbox,
+              ),
+              {sameEmailId: false},
+            ),
+          ).called(1);
+        },
+      );
+
+      testWidgets(
+        'bulk partial move Undo retains account A and successful ids',
+        (tester) async {
+          final session = sessionWithDelegatedAccount();
+          mailboxDashboardController.sessionCurrent = session;
+          mailboxDashboardController.setSelectedMailbox(
+            mailboxFor(delegatedAccountId, sourceMailboxId),
+          );
+          await tester.pumpWidget(
+            makeTestableWidget(child: const SizedBox.shrink()),
+          );
+          await tester.pump();
+          clearInteractions(appToast);
+          when(
+            moveMultipleEmailToMailboxInteractor.execute(any, any, any, any),
+          ).thenAnswer((_) => const Stream.empty());
+
+          mailboxDashboardController.onData(
+            Right(
+              MoveMultipleEmailToMailboxHasSomeEmailFailure(
+                [sameEmailId],
+                destinationMailboxId,
+                MoveAction.moving,
+                EmailActionType.moveToMailbox,
+                accountId: delegatedAccountId,
+                originalMailboxIdsWithMoveSucceededEmailIds: {
+                  sourceMailboxId: [sameEmailId],
+                },
+                moveSucceededEmailIdsWithReadStatus: {sameEmailId: true},
+              ),
+            ),
+          );
+          final undoCallback = captureUndoCallback();
+
+          mailboxDashboardController.setSelectedMailbox(
+            mailboxFor(primaryAccountId, sourceMailboxId),
+          );
+          undoCallback();
+
+          verify(
+            moveMultipleEmailToMailboxInteractor.execute(
+              session,
+              delegatedAccountId,
+              MoveToMailboxRequest(
+                {
+                  destinationMailboxId: [sameEmailId],
+                },
+                sourceMailboxId,
+                MoveAction.undo,
+                EmailActionType.moveToMailbox,
+              ),
+              {sameEmailId: true},
+            ),
+          ).called(1);
+        },
+      );
+
+      testWidgets(
+        'Undo does not dispatch when captured account is no longer present',
+        (tester) async {
+          mailboxDashboardController.sessionCurrent =
+              sessionWithDelegatedAccount();
+          mailboxDashboardController.setSelectedMailbox(
+            mailboxFor(delegatedAccountId, sourceMailboxId),
+          );
+          await tester.pumpWidget(
+            makeTestableWidget(child: const SizedBox.shrink()),
+          );
+          await tester.pump();
+          clearInteractions(appToast);
+
+          mailboxDashboardController.onData(
+            Right(
+              MoveToMailboxSuccess(
+                sameEmailId,
+                sourceMailboxId,
+                destinationMailboxId,
+                MoveAction.moving,
+                EmailActionType.moveToMailbox,
+                accountId: delegatedAccountId,
+                originalMailboxIdsWithEmailIds: {
+                  sourceMailboxId: [sameEmailId],
+                },
+                emailIdsWithReadStatus: {sameEmailId: false},
+              ),
+            ),
+          );
+          final undoCallback = captureUndoCallback();
+          clearInteractions(moveToMailboxInteractor);
+
+          mailboxDashboardController.sessionCurrent =
+              SessionFixtures.aliceSession;
+          mailboxDashboardController.setSelectedMailbox(
+            mailboxFor(primaryAccountId, sourceMailboxId),
+          );
+          undoCallback();
+
+          verifyNever(
+            moveToMailboxInteractor.execute(any, any, any, any),
           );
         },
       );

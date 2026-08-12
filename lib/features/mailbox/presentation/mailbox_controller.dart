@@ -584,6 +584,7 @@ class MailboxController extends BaseMailboxController
       if (reactionState is MarkAsEmailReadSuccess) {
         _handleMarkEmailsAsReadOrUnread(
           affectedMailboxId: reactionState.mailboxId,
+          operationAccountId: reactionState.accountId,
           readCount: reactionState.readActions == ReadActions.markAsRead
             ? 1
             : null,
@@ -595,6 +596,7 @@ class MailboxController extends BaseMailboxController
         for (var emailIdsByMailboxId in reactionState.markSuccessEmailIdsByMailboxId.entries) {
           _handleMarkEmailsAsReadOrUnread(
             affectedMailboxId: emailIdsByMailboxId.key,
+            operationAccountId: reactionState.accountId,
             readCount: reactionState.readActions == ReadActions.markAsRead
               ? emailIdsByMailboxId.value.length
               : null,
@@ -607,6 +609,7 @@ class MailboxController extends BaseMailboxController
         for (var emailIdsByMailboxId in reactionState.markSuccessEmailIdsByMailboxId.entries) {
           _handleMarkEmailsAsReadOrUnread(
             affectedMailboxId: emailIdsByMailboxId.key,
+            operationAccountId: reactionState.accountId,
             readCount: reactionState.readActions == ReadActions.markAsRead
               ? emailIdsByMailboxId.value.length
               : null,
@@ -646,16 +649,19 @@ class MailboxController extends BaseMailboxController
       } else if (reactionState is DeleteEmailPermanentlySuccess) {
         _handleDeleteEmailsFromMailbox(
           affectedMailboxId: reactionState.mailboxId,
+          operationAccountId: reactionState.accountId,
           totalEmailsChanged: -1,
         );
       } else if (reactionState is DeleteMultipleEmailsPermanentlyAllSuccess) {
         _handleDeleteEmailsFromMailbox(
           affectedMailboxId: reactionState.mailboxId,
+          operationAccountId: reactionState.accountId,
           totalEmailsChanged: -reactionState.emailIds.length,
         );
       } else if (reactionState is DeleteMultipleEmailsPermanentlyHasSomeEmailFailure) {
         _handleDeleteEmailsFromMailbox(
           affectedMailboxId: reactionState.mailboxId,
+          operationAccountId: reactionState.accountId,
           totalEmailsChanged: -reactionState.emailIds.length,
         );
       } else if (reactionState is EmptyTrashFolderSuccess) {
@@ -670,18 +676,21 @@ class MailboxController extends BaseMailboxController
         );
       } else if (reactionState is MoveToMailboxSuccess) {
         _handleMoveEmailsToMailbox(
+          operationAccountId: reactionState.accountId,
           originalMailboxIdsWithEmailIds: reactionState.originalMailboxIdsWithEmailIds,
           destinationMailboxId: reactionState.destinationMailboxId,
           emailIdsWithReadStatus: reactionState.emailIdsWithReadStatus,
         );
       } else if (reactionState is MoveMultipleEmailToMailboxAllSuccess) {
         _handleMoveEmailsToMailbox(
+          operationAccountId: reactionState.accountId,
           originalMailboxIdsWithEmailIds: reactionState.originalMailboxIdsWithEmailIds,
           destinationMailboxId: reactionState.destinationMailboxId,
           emailIdsWithReadStatus: reactionState.emailIdsWithReadStatus,
         );
       } else if (reactionState is MoveMultipleEmailToMailboxHasSomeEmailFailure) {
         _handleMoveEmailsToMailbox(
+          operationAccountId: reactionState.accountId,
           originalMailboxIdsWithEmailIds: reactionState.originalMailboxIdsWithMoveSucceededEmailIds,
           destinationMailboxId: reactionState.destinationMailboxId,
           emailIdsWithReadStatus: reactionState.moveSucceededEmailIdsWithReadStatus,
@@ -748,24 +757,31 @@ class MailboxController extends BaseMailboxController
 
   /// The account-scoped key of a mailbox affected by an email action.
   ///
-  /// Email actions run against the currently viewed mailbox's account (a
-  /// delegated account when an "Other Users" mailbox is open), so the affected
-  /// unread/total counters live in that account's tree. Resolving by bare id
-  /// against the primary account would leave the delegated counter stale, or
-  /// worse, update a same-id primary mailbox instead.
-  MailboxKey? _affectedMailboxKey(MailboxId? affectedMailboxId) {
+  /// Completion handlers supply [operationAccountId] from their state. The
+  /// selection fallback is retained only for older non-email-completion paths
+  /// whose state does not carry an account.
+  MailboxKey? _affectedMailboxKey(
+    MailboxId? affectedMailboxId, {
+    AccountId? operationAccountId,
+  }) {
     if (affectedMailboxId == null) return null;
-    final accountId = selectedMailbox?.accountId ?? primaryAccountId;
+    final accountId = operationAccountId ??
+        selectedMailbox?.accountId ??
+        primaryAccountId;
     if (accountId == null) return null;
     return MailboxKey(accountId, affectedMailboxId);
   }
 
   void _handleMarkEmailsAsReadOrUnread({
     required MailboxId? affectedMailboxId,
+    AccountId? operationAccountId,
     int? readCount,
     int? unreadCount,
   }) {
-    final mailboxKey = _affectedMailboxKey(affectedMailboxId);
+    final mailboxKey = _affectedMailboxKey(
+      affectedMailboxId,
+      operationAccountId: operationAccountId,
+    );
     if (mailboxKey == null) return;
 
     updateUnreadCountOfMailboxByKey(
@@ -799,8 +815,12 @@ class MailboxController extends BaseMailboxController
   void _handleDeleteEmailsFromMailbox({
     required MailboxId? affectedMailboxId,
     required int totalEmailsChanged,
+    AccountId? operationAccountId,
   }) {
-    final mailboxKey = _affectedMailboxKey(affectedMailboxId);
+    final mailboxKey = _affectedMailboxKey(
+      affectedMailboxId,
+      operationAccountId: operationAccountId,
+    );
     if (mailboxKey == null) return;
 
     updateMailboxTotalEmailsCountByKey(
@@ -810,6 +830,7 @@ class MailboxController extends BaseMailboxController
   }
 
   void _handleMoveEmailsToMailbox({
+    required AccountId operationAccountId,
     required Map<MailboxId, List<EmailId>> originalMailboxIdsWithEmailIds,
     required MailboxId destinationMailboxId,
     required Map<EmailId, bool> emailIdsWithReadStatus,
@@ -821,7 +842,10 @@ class MailboxController extends BaseMailboxController
       final unreadEmailMovedCount = originalMailboxIdWithEmailIds.value
           .where((emailId) => emailIdsWithReadStatus[emailId] == false)
           .length;
-      final originalMailboxKey = _affectedMailboxKey(originalMailboxId);
+      final originalMailboxKey = _affectedMailboxKey(
+        originalMailboxId,
+        operationAccountId: operationAccountId,
+      );
       if (originalMailboxKey == null) continue;
       updateMailboxTotalEmailsCountByKey(
         originalMailboxKey,
@@ -834,7 +858,10 @@ class MailboxController extends BaseMailboxController
     }
 
     // Update changes in destination mailbox
-    final destinationMailboxKey = _affectedMailboxKey(destinationMailboxId);
+    final destinationMailboxKey = _affectedMailboxKey(
+      destinationMailboxId,
+      operationAccountId: operationAccountId,
+    );
     if (destinationMailboxKey == null) return;
     updateMailboxTotalEmailsCountByKey(
       destinationMailboxKey,

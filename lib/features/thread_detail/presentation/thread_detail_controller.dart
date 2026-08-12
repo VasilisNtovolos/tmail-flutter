@@ -133,10 +133,11 @@ class ThreadDetailController extends BaseController {
   StreamController<MailViewShortcutActionViewEvent>? shortcutActionEventController;
   StreamSubscription<MailViewShortcutActionViewEvent>? shortcutActionEventSubscription;
 
-  // The account the open thread lives in: the selected mailbox's account, which
+  // Outside Search the open thread uses the selected mailbox's account, which
   // is a delegated ("Other Users") account when such a mailbox is open. Loading
-  // a delegated thread's emails against the primary account would fail.
-  AccountId? get accountId => mailboxDashBoardController.emailActionAccountId;
+  // Search detail instead uses the primary account.
+  AccountId? get accountId =>
+      mailboxDashBoardController.emailActionDispatchAccountId;
   Session? get session => mailboxDashBoardController.sessionCurrent;
   MailboxId? get sentMailboxId => mailboxDashBoardController.getMailboxIdByRole(
     PresentationMailbox.roleSent,
@@ -263,12 +264,14 @@ class ThreadDetailController extends BaseController {
     } else if (success is MarkAsMultipleEmailReadAllSuccess) {
       handleMarkMultipleEmailsReadSuccess(
         success,
+        success.accountId,
         success.readActions,
         success.emailIds,
       );
     } else if (success is MarkAsMultipleEmailReadHasSomeEmailFailure) {
       handleMarkMultipleEmailsReadSuccess(
         success,
+        success.accountId,
         success.readActions,
         success.successEmailIds,
       );

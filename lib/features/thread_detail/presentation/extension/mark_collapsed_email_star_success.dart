@@ -7,6 +7,7 @@ import 'package:tmail_ui_user/features/thread_detail/presentation/thread_detail_
 
 extension MarkCollapsedEmailStarSuccess on ThreadDetailController {
   void markCollapsedEmailStarSuccess(MarkAsStarEmailSuccess success) {
+    if (success.accountId != accountId) return;
     final updatedMarkedEmail = emailIdsPresentation[success.emailId]
       ?.updateKeywords({
         KeyWordIdentifier.emailFlagged: success.markStarAction == MarkStarAction.markStar,
@@ -16,6 +17,7 @@ extension MarkCollapsedEmailStarSuccess on ThreadDetailController {
     if (mailboxDashBoardController.selectedEmail.value?.id == success.emailId) {
       mailboxDashBoardController.updateEmailFlagByEmailIds(
         [success.emailId],
+        operationAccountId: success.accountId,
         markStarAction: success.markStarAction,
       );
     }

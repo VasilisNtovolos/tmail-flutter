@@ -171,11 +171,12 @@ class SingleEmailController extends BaseController with AppLoaderMixin {
   Id? get _displayingEventBlobId => blobCalendarEvent.value?.blobId;
   bool get isCalendarEventFree => blobCalendarEvent.value?.isFree ?? true;
 
-  // The account the displayed email lives in: the selected mailbox's account,
+  // Outside Search this is the selected mailbox's account,
   // which is a delegated ("Other Users") account when such a mailbox is open.
-  // Email content, mark-as-read, attachments and MDN must all run against it, or
-  // reading a delegated email fails with notFound.
-  AccountId? get accountId => mailboxDashBoardController.emailActionAccountId;
+  // Search detail instead uses the primary account so content and mutations
+  // address the same account as the Search result.
+  AccountId? get accountId =>
+      mailboxDashBoardController.emailActionDispatchAccountId;
 
   Session? get session => mailboxDashBoardController.sessionCurrent;
 
@@ -690,7 +691,7 @@ class SingleEmailController extends BaseController with AppLoaderMixin {
     // resolve it against the owning account (the one whose mailbox is open).
     return mailboxDashBoardController.mailboxContainOf(
       email,
-      ownerAccountId: mailboxDashBoardController.emailActionAccountId,
+      ownerAccountId: mailboxDashBoardController.emailActionDispatchAccountId,
     );
   }
 
@@ -712,6 +713,7 @@ class SingleEmailController extends BaseController with AppLoaderMixin {
   }
 
   void _handleMarkAsEmailReadCompleted(MarkAsEmailReadSuccess success) {
+    if (success.accountId != accountId) return;
     _threadDetailController?.markCollapsedEmailReadSuccess(success);
   }
 
@@ -859,6 +861,7 @@ class SingleEmailController extends BaseController with AppLoaderMixin {
   }
 
   void _markAsEmailStarSuccess(MarkAsStarEmailSuccess success) {
+    if (success.accountId != accountId) return;
     final newKeywords = {
       KeyWordIdentifier.emailFlagged:
         success.markStarAction == MarkStarAction.markStar,
@@ -876,6 +879,7 @@ class SingleEmailController extends BaseController with AppLoaderMixin {
 
     mailboxDashBoardController.updateEmailFlagByEmailIds(
       [emailId],
+      operationAccountId: success.accountId,
       markStarAction: success.markStarAction,
     );
 

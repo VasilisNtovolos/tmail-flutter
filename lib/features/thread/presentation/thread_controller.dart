@@ -392,36 +392,42 @@ class ThreadController extends BaseController with EmailActionController {
           readAction: ReadActions.markAsRead,
         );
       } else if (reactionState is MoveToMailboxSuccess) {
+        if (reactionState.accountId != _accountId) return;
         mailboxDashBoardController.handleMoveEmailsToMailbox(
           originalMailboxIdsWithEmailIds: reactionState.originalMailboxIdsWithEmailIds,
           destinationMailboxId: reactionState.destinationMailboxId,
         );
         _checkIfCurrentMailboxCanLoadMore();
       } else if (reactionState is MoveMultipleEmailToMailboxAllSuccess) {
+        if (reactionState.accountId != _accountId) return;
         mailboxDashBoardController.handleMoveEmailsToMailbox(
           originalMailboxIdsWithEmailIds: reactionState.originalMailboxIdsWithEmailIds,
           destinationMailboxId: reactionState.destinationMailboxId,
         );
         _checkIfCurrentMailboxCanLoadMore();
       } else if (reactionState is MoveMultipleEmailToMailboxHasSomeEmailFailure) {
+        if (reactionState.accountId != _accountId) return;
         mailboxDashBoardController.handleMoveEmailsToMailbox(
           originalMailboxIdsWithEmailIds: reactionState.originalMailboxIdsWithMoveSucceededEmailIds,
           destinationMailboxId: reactionState.destinationMailboxId,
         );
         _checkIfCurrentMailboxCanLoadMore();
       } else if (reactionState is DeleteEmailPermanentlySuccess) {
+        if (reactionState.accountId != _accountId) return;
         _handleDeleteEmailsPermanentlyFromMailboxId(
           reactionState.mailboxId,
           deletedEmailsCount: 1,
         );
         _checkIfCurrentMailboxCanLoadMore();
       } else if (reactionState is DeleteMultipleEmailsPermanentlyAllSuccess) {
+        if (reactionState.accountId != _accountId) return;
         _handleDeleteEmailsPermanentlyFromMailboxId(
           reactionState.mailboxId,
           deletedEmailsCount: reactionState.emailIds.length,
         );
         _checkIfCurrentMailboxCanLoadMore();
       } else if (reactionState is DeleteMultipleEmailsPermanentlyHasSomeEmailFailure) {
+        if (reactionState.accountId != _accountId) return;
         _handleDeleteEmailsPermanentlyFromMailboxId(
           reactionState.mailboxId,
           deletedEmailsCount: reactionState.emailIds.length,

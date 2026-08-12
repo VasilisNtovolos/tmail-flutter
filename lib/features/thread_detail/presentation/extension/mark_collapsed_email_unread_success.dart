@@ -8,6 +8,7 @@ import 'package:tmail_ui_user/features/thread_detail/presentation/thread_detail_
 
 extension MarkCollapsedEmailReadSuccess on ThreadDetailController {
   void markCollapsedEmailReadSuccess(MarkAsEmailReadSuccess success) {
+    if (success.accountId != accountId) return;
     _updateEmailListInMailboxDashboardController(success);
     _updateEmailKeywordInThreadDetailController(success);
     _updateEmailCollapsedStatusInThreadDetailController(success);
@@ -18,6 +19,7 @@ extension MarkCollapsedEmailReadSuccess on ThreadDetailController {
   ) {
     mailboxDashBoardController.updateEmailFlagByEmailIds(
       [success.emailId],
+      operationAccountId: success.accountId,
       readAction: success.readActions,
     );
   }

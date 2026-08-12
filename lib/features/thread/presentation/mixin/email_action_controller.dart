@@ -90,7 +90,7 @@ mixin EmailActionController {
       return;
     }
 
-    final accountId = mailboxDashBoardController.emailActionAccountId;
+    final accountId = mailboxDashBoardController.emailActionDispatchAccountId;
     if (accountId == null) {
       mailboxDashBoardController.emitMoveToTrashFailure(
         NotFoundAccountIdException(),
@@ -145,7 +145,7 @@ mixin EmailActionController {
 
   void moveToSpam(PresentationEmail email, {PresentationMailbox? mailboxContain}) async {
     final session = mailboxDashBoardController.sessionCurrent;
-    final accountId = mailboxDashBoardController.emailActionAccountId;
+    final accountId = mailboxDashBoardController.emailActionDispatchAccountId;
     // A delegated account uses its own Spam/Junk folder: the primary account's
     // spam id does not exist there. Resolving it there would move into a
     // non-existent mailbox and skip the destination permission check.
@@ -178,7 +178,7 @@ mixin EmailActionController {
 
   void unSpam(PresentationEmail email) async {
     final session = mailboxDashBoardController.sessionCurrent;
-    final accountId = mailboxDashBoardController.emailActionAccountId;
+    final accountId = mailboxDashBoardController.emailActionDispatchAccountId;
     final spamMailboxId = mailboxDashBoardController.spamMailboxId;
     final inboxMailboxId = mailboxDashBoardController.getMailboxIdByRole(PresentationMailbox.roleInbox);
 
@@ -217,7 +217,7 @@ mixin EmailActionController {
     // Open the picker for the account that owns the email being moved (delegated
     // when an Other Users mailbox is open), so the move runs against that
     // account. Email/set cannot cross accounts.
-    final accountId = mailboxDashBoardController.emailActionAccountId;
+    final accountId = mailboxDashBoardController.emailActionDispatchAccountId;
     final session = mailboxDashBoardController.sessionCurrent;
 
     if (mailboxContain != null && accountId != null) {

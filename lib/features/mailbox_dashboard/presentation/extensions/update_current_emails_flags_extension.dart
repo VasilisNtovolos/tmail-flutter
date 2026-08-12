@@ -1,15 +1,16 @@
+import 'package:jmap_dart_client/jmap/account_id.dart';
 import 'package:jmap_dart_client/jmap/mail/email/email.dart';
 import 'package:jmap_dart_client/jmap/mail/email/keyword_identifier.dart';
 import 'package:model/email/mark_star_action.dart';
 import 'package:model/email/presentation_email.dart';
 import 'package:model/email/read_actions.dart';
 import 'package:tmail_ui_user/features/mailbox_dashboard/presentation/controller/mailbox_dashboard_controller.dart';
-import 'package:tmail_ui_user/features/mailbox_dashboard/presentation/model/dashboard_routes.dart';
 import 'package:tmail_ui_user/features/thread_detail/presentation/action/thread_detail_ui_action.dart';
 
 extension UpdateCurrentEmailsFlagsExtension on MailboxDashBoardController {
   void updateEmailFlagByEmailIds(
     List<EmailId> emailIds, {
+    AccountId? operationAccountId,
     ReadActions? readAction,
     MarkStarAction? markStarAction,
     bool markAsAnswered = false,
@@ -17,6 +18,11 @@ extension UpdateCurrentEmailsFlagsExtension on MailboxDashBoardController {
     bool isLabelAdded = false,
     List<KeyWordIdentifier>? labelKeywords,
   }) {
+    final emailSource = activeEmailSource;
+    if (operationAccountId != null &&
+        operationAccountId != emailSource.accountId) {
+      return;
+    }
     if (readAction == null &&
         markStarAction == null &&
         !markAsAnswered &&
@@ -25,9 +31,7 @@ extension UpdateCurrentEmailsFlagsExtension on MailboxDashBoardController {
       return;
     }
 
-    final currentEmails = dashboardRoute.value == DashboardRoutes.searchEmail
-      ? listResultSearch
-      : emailsInCurrentMailbox;
+    final currentEmails = emailSource.emails;
 
     if (currentEmails.isEmpty) return;
 

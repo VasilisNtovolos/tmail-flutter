@@ -34,7 +34,7 @@ extension HandleActionTypeForEmailSelection on MailboxDashBoardController {
       return;
     }
 
-    final currentAccountId = emailActionAccountId;
+    final currentAccountId = emailActionDispatchAccountId;
 
     // A delegated ("Other Users") account resolves its own role folders: the
     // primary account's Trash/Spam/Archive ids do not exist there, so targeting

@@ -8,8 +8,8 @@ extension UpdateEmailsWithNewMailboxIdExtension on MailboxDashBoardController {
     required Map<MailboxId,List<EmailId>> originalMailboxIdsWithEmailIds,
     required MailboxId destinationMailboxId,
   }) {
-    final currentEmails = List<PresentationEmail>.from(
-      emailsInCurrentMailbox,
+    final searchEmails = List<PresentationEmail>.from(
+      listResultSearch,
     );
     final movedEmailIds = originalMailboxIdsWithEmailIds.entries.fold(
       <EmailId>{},
@@ -18,14 +18,14 @@ extension UpdateEmailsWithNewMailboxIdExtension on MailboxDashBoardController {
         return emailIds;
       },
     ).toList();
-    for (int i = 0; i < currentEmails.length; i++) {
-      if (!movedEmailIds.contains(currentEmails[i].id)) continue;
+    for (int i = 0; i < searchEmails.length; i++) {
+      if (!movedEmailIds.contains(searchEmails[i].id)) continue;
 
-      currentEmails[i] = currentEmails[i].copyWith(
+      searchEmails[i] = searchEmails[i].copyWith(
         mailboxIds: {destinationMailboxId: true},
         mailboxContain: mapMailboxById[destinationMailboxId],
       );
     }
-    updateEmailList(currentEmails);
+    listResultSearch.value = searchEmails;
   }
 }

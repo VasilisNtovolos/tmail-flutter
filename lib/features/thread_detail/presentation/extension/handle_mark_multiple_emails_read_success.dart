@@ -1,5 +1,6 @@
 import 'package:core/presentation/state/success.dart';
 import 'package:dartz/dartz.dart';
+import 'package:jmap_dart_client/jmap/account_id.dart';
 import 'package:jmap_dart_client/jmap/mail/email/email.dart';
 import 'package:model/email/read_actions.dart';
 import 'package:tmail_ui_user/features/thread_detail/presentation/extension/close_thread_detail_action.dart';
@@ -9,10 +10,12 @@ import 'package:tmail_ui_user/features/thread_detail/presentation/thread_detail_
 extension HandleMarkMultipleEmailsReadSuccess on ThreadDetailController {
   void handleMarkMultipleEmailsReadSuccess(
     UIState success,
+    AccountId operationAccountId,
     ReadActions readActions,
     List<EmailId> emailIds,
   ) {
     mailboxDashBoardController.consumeState(Stream.value(Right(success)));
+    if (operationAccountId != accountId) return;
     if (readActions == ReadActions.markAsRead) return;
 
     if (emailsInThreadDetailInfo.length == 1) {
