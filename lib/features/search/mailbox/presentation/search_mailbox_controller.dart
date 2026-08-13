@@ -260,17 +260,27 @@ class SearchMailboxController extends BaseMailboxController with MailboxActionHa
 
     ever(dashboardController.viewState, (viewState) {
       final reactionState = viewState.getOrElse(() => UIState.idle);
-      if (reactionState is MarkAsMailboxReadAllSuccess) {
-        final mailboxKey = primaryMailboxKey(reactionState.mailboxId);
-        if (mailboxKey != null) clearUnreadCount(mailboxKey);
-      } else if (reactionState is MarkAsMailboxReadHasSomeEmailFailure) {
-        final mailboxKey = primaryMailboxKey(reactionState.mailboxId);
-        if (mailboxKey != null) {
-          updateUnreadCountOfMailboxByKey(
-            mailboxKey,
-            unreadChanges: -reactionState.countEmailsRead,
-          );
+      if (reactionState is MarkAsMailboxReadAllSuccessWithContext) {
+        if (!isCurrentMailboxReadMutation(
+          reactionState.context,
+          dashboardController.sessionCurrent,
+        )) {
+          return;
         }
+        clearUnreadCount(reactionState.context.mailboxKey);
+      } else if (reactionState
+          is MarkAsMailboxReadHasSomeEmailFailureWithContext) {
+        if (!isCurrentMailboxReadMutation(
+          reactionState.context,
+          dashboardController.sessionCurrent,
+        )) {
+          return;
+        }
+        final mailboxKey = reactionState.context.mailboxKey;
+        updateUnreadCountOfMailboxByKey(
+          mailboxKey,
+          unreadChanges: -reactionState.countEmailsRead,
+        );
       }
     });
   }

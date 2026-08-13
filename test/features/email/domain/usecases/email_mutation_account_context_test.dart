@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:core/presentation/state/failure.dart';
 import 'package:core/presentation/state/success.dart';
 import 'package:dartz/dartz.dart';
@@ -589,6 +591,164 @@ void main() {
       }
     }
   }
+
+  test('single permanent delete preserves dispatch-time unread status', () async {
+    when(repository.deleteEmailPermanently(
+      session,
+      delegatedAccountId,
+      emailId1,
+    )).thenAnswer((_) async => true);
+
+    final success = await successOf<DeleteEmailPermanentlySuccessWithReadStatus>(
+      DeleteEmailPermanentlyInteractor(repository)
+          .execute(
+            session,
+            delegatedAccountId,
+            emailId1,
+            sourceMailboxId,
+          )
+          .withSingleDeleteReadStatus({emailId1: false}),
+    );
+
+    expect(success.emailIdsWithReadStatus, {emailId1: false});
+    expect(success.context.accountId, delegatedAccountId);
+    expect(success.context.session, same(session));
+  });
+
+  test('bulk permanent delete filters read status by successful IDs', () async {
+    when(repository.deleteMultipleEmailsPermanently(
+      session,
+      delegatedAccountId,
+      bulkEmailIds,
+    )).thenAnswer((_) async => resultWith([emailId2]));
+
+    final success = await successOf<
+        DeleteMultipleEmailsPermanentlyHasSomeEmailFailureWithReadStatus>(
+      DeleteMultipleEmailsPermanentlyInteractor(repository)
+          .execute(
+            session,
+            delegatedAccountId,
+            bulkEmailIds,
+            sourceMailboxId,
+          )
+          .withBulkDeleteReadStatus({emailId1: false, emailId2: true}),
+    );
+
+    expect(success.emailIds, [emailId2]);
+    expect(success.emailIdsWithReadStatus, {emailId2: true});
+    expect(success.context.accountId, delegatedAccountId);
+  });
+
+  test('bulk permanent delete preserves mixed read status on all success', () async {
+    when(repository.deleteMultipleEmailsPermanently(
+      session,
+      primaryAccountId,
+      bulkEmailIds,
+    )).thenAnswer((_) async => resultWith(bulkEmailIds));
+
+    final success = await successOf<
+        DeleteMultipleEmailsPermanentlyAllSuccessWithReadStatus>(
+      DeleteMultipleEmailsPermanentlyInteractor(repository)
+          .execute(
+            session,
+            primaryAccountId,
+            bulkEmailIds,
+            sourceMailboxId,
+          )
+          .withBulkDeleteReadStatus({emailId1: false, emailId2: true}),
+    );
+
+    expect(success.emailIdsWithReadStatus, {
+      emailId1: false,
+      emailId2: true,
+    });
+  });
+
+  test('delete read status participates in state equality', () {
+    final unread = DeleteEmailPermanentlySuccessWithReadStatus(
+      emailId1,
+      sourceMailboxId,
+      context: contextFor(primaryAccountId),
+      emailIdsWithReadStatus: {emailId1: false},
+    );
+    final read = DeleteEmailPermanentlySuccessWithReadStatus(
+      emailId1,
+      sourceMailboxId,
+      context: contextFor(primaryAccountId),
+      emailIdsWithReadStatus: {emailId1: true},
+    );
+
+    expect(unread, isNot(read));
+    expect(unread.hashCode, isNot(read.hashCode));
+  });
+
+  test('single delete snapshots read status before terminal completion', () async {
+    final subscribed = Completer<void>();
+    final source = StreamController<Either<Failure, Success>>.broadcast(
+      onListen: () => subscribed.complete(),
+    );
+    final readStatus = <EmailId, bool>{emailId1: false};
+    final emissionsFuture = source.stream
+        .withSingleDeleteReadStatus(readStatus)
+        .toList();
+
+    await subscribed.future;
+    readStatus.clear();
+    source.add(
+      Right(
+        DeleteEmailPermanentlySuccess(
+          emailId1,
+          sourceMailboxId,
+          context: contextFor(delegatedAccountId),
+        ),
+      ),
+    );
+    await source.close();
+
+    final success = (await emissionsFuture)
+        .whereType<Right<Failure, Success>>()
+        .map((right) => right.value)
+        .whereType<DeleteEmailPermanentlySuccessWithReadStatus>()
+        .single;
+    expect(success.emailIdsWithReadStatus, {emailId1: false});
+  });
+
+  test('bulk delete snapshots status and filters successful IDs', () async {
+    final subscribed = Completer<void>();
+    final source = StreamController<Either<Failure, Success>>.broadcast(
+      onListen: () => subscribed.complete(),
+    );
+    final readStatus = <EmailId, bool>{
+      emailId1: false,
+      emailId2: true,
+    };
+    final emissionsFuture = source.stream
+        .withBulkDeleteReadStatus(readStatus)
+        .toList();
+
+    await subscribed.future;
+    readStatus[emailId1] = true;
+    readStatus.remove(emailId2);
+    readStatus[EmailId(Id('unrelated-email'))] = false;
+    source.add(
+      Right(
+        DeleteMultipleEmailsPermanentlyHasSomeEmailFailure(
+          [emailId1],
+          sourceMailboxId,
+          context: contextFor(delegatedAccountId),
+        ),
+      ),
+    );
+    await source.close();
+
+    final success = (await emissionsFuture)
+        .whereType<Right<Failure, Success>>()
+        .map((right) => right.value)
+        .whereType<
+            DeleteMultipleEmailsPermanentlyHasSomeEmailFailureWithReadStatus>()
+        .single;
+    expect(success.emailIdsWithReadStatus, {emailId1: false});
+  });
 
   final originalMailboxIdsWithEmailIds = {
     sourceMailboxId: [emailId1],

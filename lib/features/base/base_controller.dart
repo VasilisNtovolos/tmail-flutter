@@ -22,6 +22,7 @@ import 'package:tmail_ui_user/features/base/mixin/logout_mixin.dart';
 import 'package:tmail_ui_user/features/base/mixin/popup_context_menu_action_mixin.dart';
 import 'package:tmail_ui_user/features/caching/caching_manager.dart';
 import 'package:tmail_ui_user/features/email/domain/model/email_mutation_context.dart';
+import 'package:tmail_ui_user/features/mailbox/domain/model/mailbox_read_mutation_context.dart';
 import 'package:tmail_ui_user/features/email/presentation/bindings/mdn_interactor_bindings.dart';
 import 'package:tmail_ui_user/features/home/domain/extensions/session_extensions.dart';
 import 'package:tmail_ui_user/features/login/data/network/config/oidc_constant.dart';
@@ -98,6 +99,27 @@ abstract class BaseController extends GetxController
 
   bool isCurrentEmailMutation(
     EmailMutationContext context,
+    Session? currentSession,
+  ) {
+    if (!isEmailMutationControllerAlive ||
+        currentSession == null ||
+        !identical(context.session, currentSession)) {
+      return false;
+    }
+
+    if (currentSession.primaryAccounts[CapabilityIdentifier.jmapMail] !=
+        context.primaryAccountId) {
+      return false;
+    }
+
+    return CapabilityIdentifier.jmapMail.isSupported(
+      currentSession,
+      context.accountId,
+    );
+  }
+
+  bool isCurrentMailboxReadMutation(
+    MailboxReadMutationContext context,
     Session? currentSession,
   ) {
     if (!isEmailMutationControllerAlive ||

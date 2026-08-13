@@ -384,11 +384,23 @@ class ThreadController extends BaseController with EmailActionController {
     ever(mailboxDashBoardController.viewState, (viewState) {
       if (isSearchActive) return;
       final reactionState = viewState.getOrElse(() => UIState.idle);
-      if (reactionState is MarkAsMailboxReadAllSuccess) {
+      if (reactionState is MarkAsMailboxReadAllSuccessWithContext) {
+        if (!isCurrentMailboxReadMutation(reactionState.context, _session) ||
+            mailboxDashBoardController.selectedMailbox.value?.key !=
+                reactionState.context.mailboxKey) {
+          return;
+        }
         _handleMarkEmailsAsReadByMailboxId(reactionState.mailboxId);
-      } else if (reactionState is MarkAsMailboxReadHasSomeEmailFailure) {
+      } else if (reactionState
+          is MarkAsMailboxReadHasSomeEmailFailureWithContext) {
+        if (!isCurrentMailboxReadMutation(reactionState.context, _session) ||
+            mailboxDashBoardController.selectedMailbox.value?.key !=
+                reactionState.context.mailboxKey) {
+          return;
+        }
         mailboxDashBoardController.updateEmailFlagByEmailIds(
           reactionState.successEmailIds,
+          operationAccountId: reactionState.context.accountId,
           readAction: ReadActions.markAsRead,
         );
       } else if (reactionState is MoveToMailboxSuccess) {
@@ -421,6 +433,11 @@ class ThreadController extends BaseController with EmailActionController {
         _handleDeleteEmailsPermanentlyFromMailboxId(
           reactionState.mailboxId,
           deletedEmailsCount: 1,
+          unreadEmailsDeleted: reactionState
+                  is DeleteEmailPermanentlySuccessWithReadStatus &&
+              reactionState.emailIdsWithReadStatus.values.any((hasRead) => !hasRead)
+              ? 1
+              : 0,
         );
         _checkIfCurrentMailboxCanLoadMore();
       } else if (reactionState is DeleteMultipleEmailsPermanentlyAllSuccess) {
@@ -429,6 +446,12 @@ class ThreadController extends BaseController with EmailActionController {
         _handleDeleteEmailsPermanentlyFromMailboxId(
           reactionState.mailboxId,
           deletedEmailsCount: reactionState.emailIds.length,
+          unreadEmailsDeleted: reactionState
+                  is DeleteMultipleEmailsPermanentlyAllSuccessWithReadStatus
+              ? reactionState.emailIdsWithReadStatus.values
+                  .where((hasRead) => !hasRead)
+                  .length
+              : 0,
         );
         _checkIfCurrentMailboxCanLoadMore();
       } else if (reactionState is DeleteMultipleEmailsPermanentlyHasSomeEmailFailure) {
@@ -437,6 +460,12 @@ class ThreadController extends BaseController with EmailActionController {
         _handleDeleteEmailsPermanentlyFromMailboxId(
           reactionState.mailboxId,
           deletedEmailsCount: reactionState.emailIds.length,
+          unreadEmailsDeleted: reactionState
+                  is DeleteMultipleEmailsPermanentlyHasSomeEmailFailureWithReadStatus
+              ? reactionState.emailIdsWithReadStatus.values
+                  .where((hasRead) => !hasRead)
+                  .length
+              : 0,
         );
         _checkIfCurrentMailboxCanLoadMore();
       }
@@ -491,6 +520,7 @@ class ThreadController extends BaseController with EmailActionController {
   void _handleDeleteEmailsPermanentlyFromMailboxId(
     MailboxId? mailboxId, {
     required int deletedEmailsCount,
+    required int unreadEmailsDeleted,
   }) {
     if (mailboxDashBoardController.selectedMailbox.value?.id != mailboxId) return;
     final currentMailbox = mailboxDashBoardController.selectedMailbox.value;
@@ -500,6 +530,11 @@ class ThreadController extends BaseController with EmailActionController {
       if (newTotalEmails < 0) newTotalEmails = 0;
       mailboxDashBoardController.selectedMailbox.value = currentMailbox.copyWith(
         totalEmails: TotalEmails(UnsignedInt(newTotalEmails)),
+        unreadEmails: UnreadEmails(UnsignedInt(
+          (currentMailbox.countUnreadEmails - unreadEmailsDeleted)
+              .clamp(0, currentMailbox.countUnreadEmails)
+              .toInt(),
+        )),
       );
     }
   }

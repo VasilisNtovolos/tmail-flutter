@@ -544,8 +544,12 @@ class MailboxDashBoardController extends ReloadableController
     } else if (success is DeleteEmailPermanentlySuccess) {
       if (!isCurrentEmailMutation(success.context, sessionCurrent)) return;
       _deleteEmailPermanentlySuccess(success);
-    } else if (success is MarkAsMailboxReadAllSuccess ||
-        success is MarkAsMailboxReadHasSomeEmailFailure) {
+    } else if (success is MarkAsMailboxReadAllSuccessWithContext ||
+        success is MarkAsMailboxReadHasSomeEmailFailureWithContext) {
+      final context = success is MarkAsMailboxReadAllSuccessWithContext
+          ? success.context
+          : (success as MarkAsMailboxReadHasSomeEmailFailureWithContext).context;
+      if (!isCurrentMailboxReadMutation(context, sessionCurrent)) return;
       _markAsReadMailboxSuccess(success);
     } else if (success is GetAllVacationSuccess) {
       if (success.listVacationResponse.isNotEmpty) {
@@ -673,6 +677,16 @@ class MailboxDashBoardController extends ReloadableController
       _handleUpdateEmailAsDraftsFailure(failure);
     } else if (failure is RemoveEmailDraftsFailure) {
       clearState();
+    } else if (failure is ContextualMarkAsMailboxReadAllFailure) {
+      if (!isCurrentMailboxReadMutation(failure.context, sessionCurrent)) {
+        return;
+      }
+      _markAsReadMailboxAllFailure(failure);
+    } else if (failure is ContextualMarkAsMailboxReadFailure) {
+      if (!isCurrentMailboxReadMutation(failure.context, sessionCurrent)) {
+        return;
+      }
+      _markAsReadMailboxFailure(failure);
     } else if (failure is MarkAsMailboxReadAllFailure) {
       _markAsReadMailboxAllFailure(failure);
     }  else if (failure is MarkAsMailboxReadFailure) {
@@ -1411,12 +1425,16 @@ class MailboxDashBoardController extends ReloadableController
     final currentAccountId = emailActionDispatchAccountId;
     final session = sessionCurrent;
     if (currentAccountId != null && session != null && email.id != null) {
-      consumeState(_deleteEmailPermanentlyInteractor.execute(
-        session,
-        currentAccountId,
-        email.id!,
-        email.mailboxContain?.mailboxId,
-      ));
+      consumeState(
+        _deleteEmailPermanentlyInteractor
+            .execute(
+              session,
+              currentAccountId,
+              email.id!,
+              email.mailboxContain?.mailboxId,
+            )
+            .withSingleDeleteReadStatus({email.id!: email.hasRead}),
+      );
     }
   }
 
@@ -2223,11 +2241,21 @@ class MailboxDashBoardController extends ReloadableController
 
     final currentAccountId = emailActionDispatchAccountId;
     if (currentAccountId != null && sessionCurrent != null) {
-      consumeState(_deleteMultipleEmailsPermanentlyInteractor.execute(
-        sessionCurrent!,
-        currentAccountId,
-        listEmails.listEmailIds,
-        listEmails.firstOrNull?.mailboxContain?.mailboxId));
+      final emailIdsWithReadStatus = Map.fromEntries(
+        listEmails
+            .where((email) => email.id != null)
+            .map((email) => MapEntry(email.id!, email.hasRead)),
+      );
+      consumeState(
+        _deleteMultipleEmailsPermanentlyInteractor
+            .execute(
+              sessionCurrent!,
+              currentAccountId,
+              listEmails.listEmailIds,
+              listEmails.firstOrNull?.mailboxContain?.mailboxId,
+            )
+            .withBulkDeleteReadStatus(emailIdsWithReadStatus),
+      );
     }
   }
 

@@ -42,3 +42,35 @@ class DeleteEmailPermanentlyInteractor {
     }
   }
 }
+
+extension DeleteEmailPermanentlyReadStatus on Stream<Either<Failure, Success>> {
+  Stream<Either<Failure, Success>> withSingleDeleteReadStatus(
+    Map<EmailId, bool> emailIdsWithReadStatus,
+  ) async* {
+    final capturedReadStatus =
+        Map<EmailId, bool>.unmodifiable(emailIdsWithReadStatus);
+    await for (final result in this) {
+      yield result.fold(
+        Left<Failure, Success>.new,
+        (success) {
+          if (success is! DeleteEmailPermanentlySuccess) {
+            return Right<Failure, Success>(success);
+          }
+
+          return Right<Failure, Success>(
+            DeleteEmailPermanentlySuccessWithReadStatus(
+              success.emailId,
+              success.mailboxId,
+              context: success.context,
+              emailIdsWithReadStatus: Map.fromEntries(
+                capturedReadStatus.entries.where(
+                  (entry) => entry.key == success.emailId,
+                ),
+              ),
+            ),
+          );
+        },
+      );
+    }
+  }
+}

@@ -622,14 +622,29 @@ class MailboxController extends BaseMailboxController
           );
         }
       } else if (reactionState is MarkAsMailboxReadAllSuccess) {
-        _handleMarkMailboxAsRead(
-          affectedMailboxId: reactionState.mailboxId
-        );
+        if (reactionState is MarkAsMailboxReadAllSuccessWithContext) {
+          if (!isCurrentMailboxReadMutation(
+            reactionState.context,
+            session,
+          )) {
+            return;
+          }
+          clearUnreadCount(reactionState.context.mailboxKey);
+        }
       } else if (reactionState is MarkAsMailboxReadHasSomeEmailFailure) {
-        _handleMarkEmailsAsReadOrUnread(
-          affectedMailboxId: reactionState.mailboxId,
-          readCount: reactionState.successEmailIds.length,
-        );
+        if (reactionState is MarkAsMailboxReadHasSomeEmailFailureWithContext) {
+          if (!isCurrentMailboxReadMutation(
+            reactionState.context,
+            session,
+          )) {
+            return;
+          }
+          _handleMarkEmailsAsReadOrUnread(
+            affectedMailboxId: reactionState.mailboxId,
+            operationAccountId: reactionState.context.accountId,
+            readCount: reactionState.successEmailIds.length,
+          );
+        }
       } else if (reactionState is GetRestoredDeletedMessageCompleted) {
         _handleMarkEmailsAsReadOrUnread(
           affectedMailboxId: reactionState.recoveredMailbox?.id,
@@ -655,6 +670,10 @@ class MailboxController extends BaseMailboxController
           affectedMailboxId: reactionState.mailboxId,
           operationAccountId: reactionState.accountId,
           totalEmailsChanged: -1,
+          emailIdsWithReadStatus:
+              reactionState is DeleteEmailPermanentlySuccessWithReadStatus
+                  ? reactionState.emailIdsWithReadStatus
+                  : null,
         );
       } else if (reactionState is DeleteMultipleEmailsPermanentlyAllSuccess) {
         if (!isCurrentEmailMutation(reactionState.context, session)) return;
@@ -662,6 +681,10 @@ class MailboxController extends BaseMailboxController
           affectedMailboxId: reactionState.mailboxId,
           operationAccountId: reactionState.accountId,
           totalEmailsChanged: -reactionState.emailIds.length,
+          emailIdsWithReadStatus: reactionState
+                  is DeleteMultipleEmailsPermanentlyAllSuccessWithReadStatus
+              ? reactionState.emailIdsWithReadStatus
+              : null,
         );
       } else if (reactionState is DeleteMultipleEmailsPermanentlyHasSomeEmailFailure) {
         if (!isCurrentEmailMutation(reactionState.context, session)) return;
@@ -669,6 +692,10 @@ class MailboxController extends BaseMailboxController
           affectedMailboxId: reactionState.mailboxId,
           operationAccountId: reactionState.accountId,
           totalEmailsChanged: -reactionState.emailIds.length,
+          emailIdsWithReadStatus: reactionState
+                  is DeleteMultipleEmailsPermanentlyHasSomeEmailFailureWithReadStatus
+              ? reactionState.emailIdsWithReadStatus
+              : null,
         );
       } else if (reactionState is EmptyTrashFolderSuccess) {
         _handleDeleteEmailsFromMailbox(
@@ -799,15 +826,6 @@ class MailboxController extends BaseMailboxController
     );
   }
 
-  void _handleMarkMailboxAsRead({
-    required MailboxId? affectedMailboxId
-  }) {
-    final mailboxKey = _affectedMailboxKey(affectedMailboxId);
-    if (mailboxKey == null) return;
-
-    clearUnreadCount(mailboxKey);
-  }
-
   void _handleDraftSaved({
     required MailboxId? affectedMailboxId,
     required int totalEmailsChanged,
@@ -825,6 +843,7 @@ class MailboxController extends BaseMailboxController
     required MailboxId? affectedMailboxId,
     required int totalEmailsChanged,
     AccountId? operationAccountId,
+    Map<EmailId, bool>? emailIdsWithReadStatus,
   }) {
     final mailboxKey = _affectedMailboxKey(
       affectedMailboxId,
@@ -836,6 +855,16 @@ class MailboxController extends BaseMailboxController
       mailboxKey,
       totalEmailsChanged
     );
+    final unreadEmailsDeleted = emailIdsWithReadStatus?.values
+            .where((hasRead) => !hasRead)
+            .length ??
+        0;
+    if (unreadEmailsDeleted > 0) {
+      updateUnreadCountOfMailboxByKey(
+        mailboxKey,
+        unreadChanges: -unreadEmailsDeleted,
+      );
+    }
   }
 
   void _handleMoveEmailsToMailbox({

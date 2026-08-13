@@ -25,6 +25,25 @@ class DeleteMultipleEmailsPermanentlyAllSuccess extends UIState {
   List<Object?> get props => [context, emailIds, mailboxId];
 }
 
+class DeleteMultipleEmailsPermanentlyAllSuccessWithReadStatus
+    extends DeleteMultipleEmailsPermanentlyAllSuccess {
+  final Map<EmailId, bool> emailIdsWithReadStatus;
+
+  DeleteMultipleEmailsPermanentlyAllSuccessWithReadStatus(
+    List<EmailId> emailIds,
+    MailboxId? mailboxId, {
+    required EmailMutationContext context,
+    required Map<EmailId, bool> emailIdsWithReadStatus,
+  })  : emailIdsWithReadStatus = Map.unmodifiable(emailIdsWithReadStatus),
+        super(emailIds, mailboxId, context: context);
+
+  @override
+  List<Object?> get props => [
+        ...super.props,
+        emailIdsWithReadStatus,
+      ];
+}
+
 class DeleteMultipleEmailsPermanentlyHasSomeEmailFailure extends UIState {
 
   final EmailMutationContext context;
@@ -41,6 +60,25 @@ class DeleteMultipleEmailsPermanentlyHasSomeEmailFailure extends UIState {
 
   @override
   List<Object?> get props => [context, emailIds, mailboxId];
+}
+
+class DeleteMultipleEmailsPermanentlyHasSomeEmailFailureWithReadStatus
+    extends DeleteMultipleEmailsPermanentlyHasSomeEmailFailure {
+  final Map<EmailId, bool> emailIdsWithReadStatus;
+
+  DeleteMultipleEmailsPermanentlyHasSomeEmailFailureWithReadStatus(
+    List<EmailId> emailIds,
+    MailboxId? mailboxId, {
+    required EmailMutationContext context,
+    required Map<EmailId, bool> emailIdsWithReadStatus,
+  })  : emailIdsWithReadStatus = Map.unmodifiable(emailIdsWithReadStatus),
+        super(emailIds, mailboxId, context: context);
+
+  @override
+  List<Object?> get props => [
+        ...super.props,
+        emailIdsWithReadStatus,
+      ];
 }
 
 /// Accountless preflight failure; repository failures are contextual.

@@ -78,6 +78,8 @@ import 'package:tmail_ui_user/features/login/domain/usecases/get_token_oidc_inte
 import 'package:tmail_ui_user/features/login/domain/usecases/update_account_cache_interactor.dart';
 import 'package:tmail_ui_user/features/mailbox/domain/state/create_default_mailbox_state.dart';
 import 'package:tmail_ui_user/features/mailbox/domain/state/get_all_mailboxes_state.dart';
+import 'package:tmail_ui_user/features/mailbox/domain/state/mark_as_mailbox_read_state.dart';
+import 'package:tmail_ui_user/features/mailbox/domain/model/mailbox_read_mutation_context.dart';
 import 'package:tmail_ui_user/features/mailbox/domain/usecases/clear_mailbox_interactor.dart';
 import 'package:tmail_ui_user/features/mailbox/domain/usecases/create_new_default_mailbox_interactor.dart';
 import 'package:tmail_ui_user/features/mailbox/domain/usecases/create_new_mailbox_interactor.dart';
@@ -1729,7 +1731,7 @@ void main() {
       );
 
       controllerTest(
-        'delegated permanent delete updates only delegated total',
+        'delegated permanent delete updates only delegated counters',
         () {
           final delegatedMailbox = mailboxFor(
             delegatedAccountId,
@@ -1742,17 +1744,117 @@ void main() {
 
           mailboxDashboardController.onData(
             Right(
-              DeleteEmailPermanentlySuccess(
+              DeleteEmailPermanentlySuccessWithReadStatus(
                 sameEmailId,
                 sourceMailboxId,
                 context: contextFor(delegatedAccountId),
+                emailIdsWithReadStatus: {sameEmailId: false},
               ),
             ),
           );
 
-          expect(mailboxDashboardController.emailsInCurrentMailbox, isEmpty);
-          expect(totalFor(delegatedAccountId, sourceMailboxId), 9);
-          expect(totalFor(primaryAccountId, sourceMailboxId), 10);
+           expect(mailboxDashboardController.emailsInCurrentMailbox, isEmpty);
+           expect(totalFor(delegatedAccountId, sourceMailboxId), 9);
+           expect(unreadFor(delegatedAccountId, sourceMailboxId), 4);
+           expect(totalFor(primaryAccountId, sourceMailboxId), 10);
+           expect(unreadFor(primaryAccountId, sourceMailboxId), 5);
+         },
+       );
+
+      testWidgets(
+        'mark-mailbox-read completion keeps the originating account after a same-id selection change',
+        (tester) async {
+          await tester.pumpWidget(
+            makeTestableWidget(child: const SizedBox.shrink()),
+          );
+          await tester.pump();
+
+          final delegatedSession = sessionWithDelegatedAccount();
+          final delegatedMailbox = mailboxFor(
+            delegatedAccountId,
+            sourceMailboxId,
+          );
+          final primaryMailbox = mailboxFor(primaryAccountId, sourceMailboxId);
+          mailboxDashboardController.sessionCurrent = delegatedSession;
+          mailboxDashboardController.setSelectedMailbox(delegatedMailbox);
+
+          final completion =
+              StreamController<Either<Failure, Success>>.broadcast();
+          when(markAsMailboxReadInteractor.execute(
+            any,
+            any,
+            any,
+            any,
+            any,
+            any,
+          )).thenAnswer((_) => completion.stream);
+
+          mailboxDashboardController.markAsReadMailbox(
+            delegatedSession,
+            delegatedAccountId,
+            sourceMailboxId,
+            'Delegated source',
+            delegatedMailbox.countUnreadEmails,
+          );
+          verify(markAsMailboxReadInteractor.execute(
+            delegatedSession,
+            delegatedAccountId,
+            sourceMailboxId,
+            'Delegated source',
+            delegatedMailbox.countUnreadEmails,
+            any,
+          )).called(1);
+          mailboxDashboardController.setSelectedMailbox(primaryMailbox);
+
+          completion.add(
+            Right(
+              MarkAsMailboxReadAllSuccessWithContext(
+                'Delegated source',
+                sourceMailboxId,
+                context: MailboxReadMutationContext.fromOperation(
+                  delegatedSession,
+                  delegatedAccountId,
+                  sourceMailboxId,
+                ),
+              ),
+            ),
+          );
+          await tester.pumpAndSettle();
+          await completion.close();
+
+          expect(unreadFor(delegatedAccountId, sourceMailboxId), 0);
+          expect(unreadFor(primaryAccountId, sourceMailboxId), 5);
+        },
+      );
+
+      controllerTest(
+        'mark-mailbox-read completion from a replacement Session changes no counters',
+        () {
+          final originalSession = sessionWithDelegatedAccount();
+          mailboxDashboardController.sessionCurrent = originalSession;
+          mailboxDashboardController.setSelectedMailbox(
+            mailboxFor(delegatedAccountId, sourceMailboxId),
+          );
+          final context = MailboxReadMutationContext.fromOperation(
+            originalSession,
+            delegatedAccountId,
+            sourceMailboxId,
+          );
+
+          mailboxDashboardController.sessionCurrent =
+              sessionWithDelegatedAccount();
+          mailboxDashboardController.onData(
+            Right(
+              MarkAsMailboxReadAllSuccessWithContext(
+                'Delegated source',
+                sourceMailboxId,
+                context: context,
+              ),
+            ),
+          );
+
+          expect(unreadFor(delegatedAccountId, sourceMailboxId), 5);
+          expect(unreadFor(primaryAccountId, sourceMailboxId), 5);
         },
       );
 
@@ -3145,6 +3247,115 @@ void main() {
               {sameEmailId: false},
             ),
           ).called(1);
+        },
+      );
+
+      controllerTest(
+        'read permanent delete updates total without changing unread',
+        () {
+          mailboxDashboardController.setSelectedMailbox(
+            mailboxFor(primaryAccountId, sourceMailboxId),
+          );
+
+          mailboxDashboardController.onData(
+            Right(
+              DeleteEmailPermanentlySuccessWithReadStatus(
+                sameEmailId,
+                sourceMailboxId,
+                context: contextFor(primaryAccountId),
+                emailIdsWithReadStatus: {sameEmailId: true},
+              ),
+            ),
+          );
+
+          expect(totalFor(primaryAccountId, sourceMailboxId), 9);
+          expect(unreadFor(primaryAccountId, sourceMailboxId), 5);
+        },
+      );
+
+      controllerTest(
+        'bulk permanent delete decrements unread only for successful unread emails',
+        () {
+          mailboxDashboardController.setSelectedMailbox(
+            mailboxFor(delegatedAccountId, sourceMailboxId),
+          );
+
+          mailboxDashboardController.onData(
+            Right(
+              DeleteMultipleEmailsPermanentlyAllSuccessWithReadStatus(
+                [sameEmailId, secondEmailId],
+                sourceMailboxId,
+                context: contextFor(delegatedAccountId),
+                emailIdsWithReadStatus: {
+                  sameEmailId: false,
+                  secondEmailId: true,
+                },
+              ),
+            ),
+          );
+
+          expect(totalFor(delegatedAccountId, sourceMailboxId), 8);
+          expect(unreadFor(delegatedAccountId, sourceMailboxId), 4);
+          expect(totalFor(primaryAccountId, sourceMailboxId), 10);
+          expect(unreadFor(primaryAccountId, sourceMailboxId), 5);
+        },
+      );
+
+      controllerTest(
+        'bulk partial permanent delete ignores failed unread IDs',
+        () {
+          mailboxDashboardController.setSelectedMailbox(
+            mailboxFor(delegatedAccountId, sourceMailboxId),
+          );
+
+          mailboxDashboardController.onData(
+            Right(
+              DeleteMultipleEmailsPermanentlyHasSomeEmailFailureWithReadStatus(
+                [secondEmailId],
+                sourceMailboxId,
+                context: contextFor(delegatedAccountId),
+                emailIdsWithReadStatus: {secondEmailId: true},
+              ),
+            ),
+          );
+
+          expect(totalFor(delegatedAccountId, sourceMailboxId), 9);
+          expect(unreadFor(delegatedAccountId, sourceMailboxId), 5);
+          expect(totalFor(primaryAccountId, sourceMailboxId), 10);
+          expect(unreadFor(primaryAccountId, sourceMailboxId), 5);
+        },
+      );
+
+      controllerTest(
+        'permanent delete completion from a replacement Session changes no counters',
+        () {
+          final originalSession = sessionWithDelegatedAccount();
+          mailboxDashboardController.sessionCurrent = originalSession;
+          mailboxDashboardController.setSelectedMailbox(
+            mailboxFor(delegatedAccountId, sourceMailboxId),
+          );
+          final context = EmailMutationContext.fromOperation(
+            originalSession,
+            delegatedAccountId,
+          );
+
+          mailboxDashboardController.sessionCurrent =
+              sessionWithDelegatedAccount();
+          mailboxDashboardController.onData(
+            Right(
+              DeleteEmailPermanentlySuccessWithReadStatus(
+                sameEmailId,
+                sourceMailboxId,
+                context: context,
+                emailIdsWithReadStatus: {sameEmailId: false},
+              ),
+            ),
+          );
+
+          expect(totalFor(delegatedAccountId, sourceMailboxId), 10);
+          expect(unreadFor(delegatedAccountId, sourceMailboxId), 5);
+          expect(totalFor(primaryAccountId, sourceMailboxId), 10);
+          expect(unreadFor(primaryAccountId, sourceMailboxId), 5);
         },
       );
 

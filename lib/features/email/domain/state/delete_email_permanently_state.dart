@@ -24,6 +24,25 @@ class DeleteEmailPermanentlySuccess extends UIState {
   List<Object?> get props => [context, emailId, mailboxId];
 }
 
+class DeleteEmailPermanentlySuccessWithReadStatus
+    extends DeleteEmailPermanentlySuccess {
+  final Map<EmailId, bool> emailIdsWithReadStatus;
+
+  DeleteEmailPermanentlySuccessWithReadStatus(
+    EmailId emailId,
+    MailboxId? mailboxId, {
+    required EmailMutationContext context,
+    required Map<EmailId, bool> emailIdsWithReadStatus,
+  })  : emailIdsWithReadStatus = Map.unmodifiable(emailIdsWithReadStatus),
+        super(emailId, mailboxId, context: context);
+
+  @override
+  List<Object?> get props => [
+        ...super.props,
+        emailIdsWithReadStatus,
+      ];
+}
+
 /// Accountless base retained for non-feedback preflight callers.
 /// Repository failures use [ContextualDeleteEmailPermanentlyFailure].
 class DeleteEmailPermanentlyFailure extends FeatureFailure {

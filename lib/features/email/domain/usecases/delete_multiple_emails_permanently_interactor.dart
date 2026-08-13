@@ -48,3 +48,62 @@ class DeleteMultipleEmailsPermanentlyInteractor {
     }
   }
 }
+
+extension DeleteMultipleEmailsPermanentlyReadStatus
+    on Stream<Either<Failure, Success>> {
+  Stream<Either<Failure, Success>> withBulkDeleteReadStatus(
+    Map<EmailId, bool> emailIdsWithReadStatus,
+  ) async* {
+    final capturedReadStatus =
+        Map<EmailId, bool>.unmodifiable(emailIdsWithReadStatus);
+    await for (final result in this) {
+      yield result.fold(
+        Left<Failure, Success>.new,
+        (success) {
+          if (success is DeleteMultipleEmailsPermanentlyAllSuccess) {
+            return Right<Failure, Success>(
+              DeleteMultipleEmailsPermanentlyAllSuccessWithReadStatus(
+                success.emailIds,
+                success.mailboxId,
+                context: success.context,
+                emailIdsWithReadStatus: _successfulReadStatus(
+                  success.emailIds,
+                  capturedReadStatus,
+                ),
+              ),
+            );
+          }
+
+          if (success
+              is DeleteMultipleEmailsPermanentlyHasSomeEmailFailure) {
+            return Right<Failure, Success>(
+              DeleteMultipleEmailsPermanentlyHasSomeEmailFailureWithReadStatus(
+                success.emailIds,
+                success.mailboxId,
+                context: success.context,
+                emailIdsWithReadStatus: _successfulReadStatus(
+                  success.emailIds,
+                  capturedReadStatus,
+                ),
+              ),
+            );
+          }
+
+          return Right<Failure, Success>(success);
+        },
+      );
+    }
+  }
+
+  Map<EmailId, bool> _successfulReadStatus(
+    List<EmailId> successfulEmailIds,
+    Map<EmailId, bool> emailIdsWithReadStatus,
+  ) {
+    final successfulIds = successfulEmailIds.toSet();
+    return Map.fromEntries(
+      emailIdsWithReadStatus.entries.where(
+        (entry) => successfulIds.contains(entry.key),
+      ),
+    );
+  }
+}
