@@ -693,11 +693,14 @@ class SingleEmailController extends BaseController with AppLoaderMixin {
   }
 
   PresentationMailbox? getMailboxContain(PresentationEmail email) {
-    // Account-aware: a delegated email's mailbox is not in the primary map, so
-    // resolve it against the owning account (the one whose mailbox is open).
-    return mailboxDashBoardController.mailboxContainOf(
+    final operationAccountId =
+        mailboxDashBoardController.emailActionDispatchAccountId;
+    if (operationAccountId == null) return null;
+
+    return mailboxDashBoardController.resolveMailboxContainForOperation(
       email,
-      ownerAccountId: mailboxDashBoardController.emailActionDispatchAccountId,
+      operationAccountId: operationAccountId,
+      cachedMailbox: mailboxDashBoardController.selectedMailbox.value,
     );
   }
 
@@ -742,14 +745,20 @@ class SingleEmailController extends BaseController with AppLoaderMixin {
 
   void moveToMailbox(PresentationEmail email) async {
     if (session != null && accountId != null) {
+      final currentMailbox = getMailboxContain(email);
+      if (currentMailbox == null) {
+        mailboxDashBoardController.emitMoveEmailFailure(
+          EmailActionType.moveToMailbox,
+        );
+        return;
+      }
+
       final moveActionRequest = await emailActionReactor.moveToMailbox(
         session!,
         accountId!,
         email,
         mapMailbox: mailboxDashBoardController.mapMailboxById,
-        selectedMailbox: currentEmail?.findMailboxContain(
-          mailboxDashBoardController.mapMailboxById,
-        ),
+        selectedMailbox: currentMailbox,
         isSearchEmailRunning: mailboxDashBoardController.searchController.isSearchEmailRunning,
       );
       if (moveActionRequest == null) return;
@@ -824,14 +833,27 @@ class SingleEmailController extends BaseController with AppLoaderMixin {
 
   void moveToSpam(PresentationEmail email) {
     if (session != null && accountId != null) {
+      final isDelegated = accountId != mailboxDashBoardController.accountId.value;
+      final spamMailboxId = isDelegated
+          ? mailboxDashBoardController.roleMailboxIdInAccount(
+              accountId!,
+              [
+                PresentationMailbox.roleJunk,
+                PresentationMailbox.roleSpam,
+              ],
+            )
+          : mailboxDashBoardController.spamMailboxId;
       final moveActionRequest = emailActionReactor.moveToSpam(
         email,
         mapMailbox: mailboxDashBoardController.mapMailboxById,
-        selectedMailbox: mailboxDashBoardController.selectedMailbox.value,
+        selectedMailbox: getMailboxContain(email),
         isSearchEmailRunning: mailboxDashBoardController.searchController.isSearchEmailRunning,
-        mapDefaultMailboxIdByRole: mailboxDashBoardController.mapDefaultMailboxIdByRole,
+        spamMailboxId: spamMailboxId,
       );
-      if (moveActionRequest == null) return;
+      if (moveActionRequest == null) {
+        mailboxDashBoardController.emitMoveEmailFailure(EmailActionType.moveToSpam);
+        return;
+      }
       mailboxDashBoardController.moveToMailbox(
         session!,
         accountId!,
@@ -846,14 +868,36 @@ class SingleEmailController extends BaseController with AppLoaderMixin {
 
   void unSpam(PresentationEmail email) {
     if (session != null && accountId != null) {
+      final isDelegated = accountId != mailboxDashBoardController.accountId.value;
+      final spamMailboxId = isDelegated
+          ? mailboxDashBoardController.roleMailboxIdInAccount(
+              accountId!,
+              [
+                PresentationMailbox.roleJunk,
+                PresentationMailbox.roleSpam,
+              ],
+            )
+          : mailboxDashBoardController.spamMailboxId;
+      final inboxMailboxId = isDelegated
+          ? mailboxDashBoardController.roleMailboxIdInAccount(
+              accountId!,
+              [PresentationMailbox.roleInbox],
+            )
+          : mailboxDashBoardController.getMailboxIdByRole(
+              PresentationMailbox.roleInbox,
+            );
       final moveActionRequest = emailActionReactor.unSpam(
         email,
         mapMailbox: mailboxDashBoardController.mapMailboxById,
-        selectedMailbox: mailboxDashBoardController.selectedMailbox.value,
+        selectedMailbox: getMailboxContain(email),
         isSearchEmailRunning: mailboxDashBoardController.searchController.isSearchEmailRunning,
-        mapDefaultMailboxIdByRole: mailboxDashBoardController.mapDefaultMailboxIdByRole,
+        spamMailboxId: spamMailboxId,
+        inboxMailboxId: inboxMailboxId,
       );
-      if (moveActionRequest == null) return;
+      if (moveActionRequest == null) {
+        mailboxDashBoardController.emitMoveEmailFailure(EmailActionType.unSpam);
+        return;
+      }
       mailboxDashBoardController.moveToMailbox(
         session!,
         accountId!,
@@ -1148,11 +1192,14 @@ class SingleEmailController extends BaseController with AppLoaderMixin {
           : selectedMailbox?.browserRouteTitle ?? '',
         url: RouteUtils.createUrlWebLocationBar(
           AppRoutes.dashboard,
-          router: NavigationRouter(
-            mailboxId: isSearchRunning
-              ? null
-              : selectedMailbox?.browserRouteMailboxId,
-            labelId: selectedMailbox?.labelId,
+            router: NavigationRouter(
+              mailboxId: isSearchRunning
+                ? null
+                : selectedMailbox?.browserRouteMailboxId,
+              emailAccountId: mailboxDashBoardController
+                  .emailNavigationContext
+                  ?.accountId,
+              labelId: selectedMailbox?.labelId,
             dashboardType: isSearchRunning
               ? DashboardType.search
               : DashboardType.normal,

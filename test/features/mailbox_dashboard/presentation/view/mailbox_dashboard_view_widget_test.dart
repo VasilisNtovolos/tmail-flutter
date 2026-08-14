@@ -1640,6 +1640,179 @@ void main() {
       }
 
       controllerTest(
+        'mobile Search role mutations use the primary account',
+        () {
+          final primaryTrash = PresentationMailbox(
+            MailboxId(Id('mobile-search-trash')),
+            accountId: primaryAccountId,
+            role: PresentationMailbox.roleTrash,
+          );
+          final primarySpam = PresentationMailbox(
+            MailboxId(Id('mobile-search-spam')),
+            accountId: primaryAccountId,
+            role: PresentationMailbox.roleSpam,
+          );
+          final primaryInbox = PresentationMailbox(
+            MailboxId(Id('mobile-search-inbox')),
+            accountId: primaryAccountId,
+            role: PresentationMailbox.roleInbox,
+          );
+          final primaryArchive = PresentationMailbox(
+            MailboxId(Id('mobile-search-archive')),
+            accountId: primaryAccountId,
+            role: PresentationMailbox.roleArchive,
+          );
+          final delegatedSource = mailboxFor(
+            delegatedAccountId,
+            sourceMailboxId,
+          );
+          final primarySource = mailboxFor(
+            primaryAccountId,
+            sourceMailboxId,
+          );
+          final email = emailFor(primarySource, EmailId(Id('mobile-search-email')));
+
+          mailboxDashboardController.accountId.value = primaryAccountId;
+          mailboxDashboardController.sessionCurrent =
+              sessionWithDelegatedAccount();
+          mailboxDashboardController.selectedMailbox.value = delegatedSource;
+          mailboxDashboardController.dashboardRoute.value =
+              DashboardRoutes.searchEmail;
+          mailboxDashboardController.setMapMailboxById({
+            primarySource.id: primarySource,
+            primaryTrash.id: primaryTrash,
+            primarySpam.id: primarySpam,
+            primaryInbox.id: primaryInbox,
+            primaryArchive.id: primaryArchive,
+          });
+          mailboxDashboardController.setMapMailboxByKey({
+            MailboxKey(primaryAccountId, primarySource.id): primarySource,
+            MailboxKey(primaryAccountId, primaryTrash.id): primaryTrash,
+            MailboxKey(primaryAccountId, primarySpam.id): primarySpam,
+            MailboxKey(primaryAccountId, primaryInbox.id): primaryInbox,
+            MailboxKey(primaryAccountId, primaryArchive.id): primaryArchive,
+          });
+          mailboxDashboardController.setMapDefaultMailboxIdByRole({
+            PresentationMailbox.roleTrash: primaryTrash.id,
+            PresentationMailbox.roleSpam: primarySpam.id,
+            PresentationMailbox.roleInbox: primaryInbox.id,
+            PresentationMailbox.roleArchive: primaryArchive.id,
+          });
+
+          final searchEmailController = registerSearchEmailController();
+          searchEmailController.searchIsRunning.value = true;
+          when(
+            moveMultipleEmailToMailboxInteractor.execute(any, any, any, any),
+          ).thenAnswer((_) => const Stream.empty());
+
+          void expectPrimaryDispatch(
+            EmailActionType actionType,
+            MailboxId expectedSourceId,
+            MailboxId expectedDestinationId,
+          ) {
+            clearInteractions(moveMultipleEmailToMailboxInteractor);
+            searchEmailController.handleSelectionEmailAction(
+              actionType,
+              [email],
+            );
+            final captured = verify(
+              moveMultipleEmailToMailboxInteractor.execute(
+                captureAny,
+                captureAny,
+                captureAny,
+                captureAny,
+              ),
+            ).captured;
+            final request = captured[2] as MoveToMailboxRequest;
+            expect(captured[1], primaryAccountId);
+            expect(request.currentMailboxes.keys, contains(expectedSourceId));
+            expect(request.destinationMailboxId, expectedDestinationId);
+          }
+
+          expectPrimaryDispatch(
+            EmailActionType.moveToTrash,
+            primarySource.id,
+            primaryTrash.id,
+          );
+          expectPrimaryDispatch(
+            EmailActionType.moveToSpam,
+            primarySource.id,
+            primarySpam.id,
+          );
+          expectPrimaryDispatch(
+            EmailActionType.unSpam,
+            primarySpam.id,
+            primaryInbox.id,
+          );
+          expectPrimaryDispatch(
+            EmailActionType.archiveMessage,
+            primarySource.id,
+            primaryArchive.id,
+          );
+        },
+      );
+
+      controllerTest(
+        'Search public action re-resolves stale delegated cached containment',
+        () {
+          final primarySource = mailboxFor(primaryAccountId, sourceMailboxId);
+          final delegatedSource = mailboxFor(delegatedAccountId, sourceMailboxId);
+          final primarySpam = PresentationMailbox(
+            MailboxId(Id('stale-search-primary-spam')),
+            accountId: primaryAccountId,
+            role: PresentationMailbox.roleSpam,
+          );
+          final email = PresentationEmail(
+            id: EmailId(Id('stale-search-email')),
+            mailboxIds: {primarySource.id: true},
+            mailboxContain: delegatedSource,
+          );
+
+          mailboxDashboardController.accountId.value = primaryAccountId;
+          mailboxDashboardController.selectedMailbox.value = delegatedSource;
+          mailboxDashboardController.dashboardRoute.value =
+              DashboardRoutes.searchEmail;
+          mailboxDashboardController.setMapMailboxById({
+            primarySource.id: primarySource,
+            primarySpam.id: primarySpam,
+          });
+          mailboxDashboardController.setMapMailboxByKey({
+            MailboxKey(primaryAccountId, primarySource.id): primarySource,
+            MailboxKey(primaryAccountId, primarySpam.id): primarySpam,
+            MailboxKey(delegatedAccountId, delegatedSource.id): delegatedSource,
+          });
+          mailboxDashboardController.setMapDefaultMailboxIdByRole({
+            PresentationMailbox.roleSpam: primarySpam.id,
+          });
+
+          final searchEmailController = registerSearchEmailController();
+          searchEmailController.searchIsRunning.value = true;
+          when(
+            moveToMailboxInteractor.execute(any, any, any, any),
+          ).thenAnswer((_) => const Stream.empty());
+
+          searchEmailController.pressEmailAction(
+            EmailActionType.moveToSpam,
+            email,
+            delegatedSource,
+          );
+
+          final captured = verify(
+            moveToMailboxInteractor.execute(
+              captureAny,
+              captureAny,
+              captureAny,
+              captureAny,
+            ),
+          ).captured;
+          final request = captured[2] as MoveToMailboxRequest;
+          expect(captured[1], primaryAccountId);
+          expect(request.currentMailboxes.keys, [primarySource.id]);
+          expect(request.destinationMailboxId, primarySpam.id);
+        },
+      );
+
+      controllerTest(
         'delegated move completion updates only delegated same-id counters',
         () {
           mailboxDashboardController.setSelectedMailbox(

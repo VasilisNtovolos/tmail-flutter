@@ -139,6 +139,7 @@ import 'package:tmail_ui_user/features/mailbox_dashboard/presentation/extensions
 import 'package:tmail_ui_user/features/mailbox_dashboard/presentation/extensions/cleanup_recent_search_extension.dart';
 import 'package:tmail_ui_user/features/mailbox_dashboard/presentation/extensions/delete_emails_in_mailbox_extension.dart';
 import 'package:tmail_ui_user/features/mailbox_dashboard/presentation/extensions/handle_action_type_for_email_selection.dart';
+import 'package:tmail_ui_user/features/mailbox_dashboard/presentation/extensions/get_mailbox_contain_extension.dart';
 import 'package:tmail_ui_user/features/mailbox_dashboard/presentation/extensions/handle_clear_mailbox_extension.dart';
 import 'package:tmail_ui_user/features/mailbox_dashboard/presentation/extensions/handle_create_new_rule_filter.dart';
 import 'package:tmail_ui_user/features/mailbox_dashboard/presentation/extensions/handle_preferences_setting_extension.dart';
@@ -312,21 +313,50 @@ class MailboxDashBoardController extends ReloadableController
   final selectedMailbox = Rxn<PresentationMailbox>();
   final selectedEmail = Rxn<PresentationEmail>();
   final accountId = Rxn<AccountId>();
+  EmailNavigationContext? _emailNavigationContext;
+
+  EmailNavigationContext? get emailNavigationContext =>
+      _emailNavigationContext;
 
   /// The currently viewed mailbox collection uses the selected
   /// mailbox's account when it is a delegated ("Other Users") mailbox, otherwise
   /// the primary account.
   ///
   /// New mutations use [emailActionDispatchAccountId] below.
-  AccountId? get emailActionAccountId =>
-      selectedMailbox.value?.accountId ?? accountId.value;
+  AccountId? get emailActionAccountId {
+    if (dashboardRoute.value == DashboardRoutes.threadDetailed &&
+        selectedEmail.value != null &&
+        _emailNavigationContext != null) {
+      return _isEmailNavigationContextCurrent
+          ? _emailNavigationContext!.accountId
+          : null;
+    }
+
+    return selectedMailbox.value?.accountId ?? accountId.value;
+  }
 
   /// Search mutations use the primary account while all other mutations keep
   /// the selected mailbox ownership above.
   AccountId? get emailActionDispatchAccountId =>
-      searchController.isSearchEmailRunning
+      dashboardRoute.value == DashboardRoutes.searchEmail
           ? accountId.value
           : emailActionAccountId;
+
+  bool isEmailOperationAccountUsable(AccountId? operationAccountId) {
+    final session = sessionCurrent;
+    if (operationAccountId == null || session == null) return false;
+    return CapabilityIdentifier.jmapMail.isSupported(
+      session,
+      operationAccountId,
+    );
+  }
+
+  bool get _isEmailNavigationContextCurrent {
+    final context = _emailNavigationContext;
+    return context != null &&
+        identical(context.session, sessionCurrent) &&
+        isEmailOperationAccountUsable(context.accountId);
+  }
 
   /// Account and collection represented by the active email source.
   ///
@@ -337,18 +367,8 @@ class MailboxDashBoardController extends ReloadableController
     RxList<PresentationEmail> emails,
     bool isSearchResult,
   }) get activeEmailSource {
-    final displayedEmail = selectedEmail.value;
-    final displayedEmailId = displayedEmail?.id;
-    final displayedEmailAccountId =
-        displayedEmail?.mailboxContain?.accountId;
-    final isSearchResult = searchController.isSearchEmailRunning &&
-        (dashboardRoute.value == DashboardRoutes.searchEmail ||
-            (displayedEmailId != null &&
-                (displayedEmailAccountId == null ||
-                    displayedEmailAccountId == accountId.value) &&
-                listResultSearch.any((email) =>
-                    email.id == displayedEmailId &&
-                    email.mailboxContain?.accountId == accountId.value)));
+    final isSearchResult = dashboardRoute.value == DashboardRoutes.searchEmail ||
+        _emailNavigationContext?.isSearch == true;
 
     return (
       accountId: isSearchResult ? accountId.value : emailActionAccountId,
@@ -602,7 +622,10 @@ class MailboxDashBoardController extends ReloadableController
       if (!isCurrentEmailMutation(context, sessionCurrent)) return;
       _deleteMultipleEmailsPermanentlySuccess(success);
     } else if(success is GetEmailByIdSuccess) {
-      openEmailDetailedView(success.email);
+      final email = success.mailboxContain == null
+          ? success.email
+          : success.email.copyWith(mailboxContain: success.mailboxContain);
+      openEmailDetailedView(email);
     } else if (success is StoreSendingEmailSuccess) {
       _handleStoreSendingEmailSuccess(success);
     } else if (success is GetAllSendingEmailSuccess) {
@@ -1126,13 +1149,22 @@ class MailboxDashBoardController extends ReloadableController
     PresentationEmail email, {
     AccountId? ownerAccountId,
   }) {
-    final byPrimary = email.findMailboxContain(mapMailboxById);
-    if (byPrimary != null || ownerAccountId == null) return byPrimary;
+    final mailboxIds = email.mailboxIds?.entries
+        .where((entry) => entry.value)
+        .map((entry) => entry.key)
+        .toList();
 
-    final mailboxIds = email.mailboxIds?..removeWhere((_, selected) => !selected);
-    final firstMailboxId = mailboxIds?.keys.firstOrNull;
-    if (firstMailboxId == null) return null;
-    return mapMailboxByKey[MailboxKey(ownerAccountId, firstMailboxId)];
+    if (ownerAccountId != null) {
+      for (final mailboxId in mailboxIds ?? const <MailboxId>[]) {
+        final mailbox = getMailboxByIdInAccount(ownerAccountId, mailboxId);
+        if (mailbox != null) return mailbox;
+      }
+      return null;
+    }
+
+    final primaryAccountId = accountId.value;
+    if (primaryAccountId == null) return null;
+    return mailboxContainOf(email, ownerAccountId: primaryAccountId);
   }
 
   /// The first mailbox matching [roles] (in order) that belongs to
@@ -1144,7 +1176,9 @@ class MailboxDashBoardController extends ReloadableController
   MailboxId? roleMailboxIdInAccount(AccountId ownerAccountId, List<Role> roles) {
     for (final role in roles) {
       for (final mailbox in mapMailboxByKey.values) {
-        if (mailbox.accountId == ownerAccountId && mailbox.role == role) {
+        if (mailbox.accountId == ownerAccountId &&
+            mailbox.role == role &&
+            getMailboxByIdInAccount(ownerAccountId, mailbox.id) != null) {
           return mailbox.id;
         }
       }
@@ -1211,9 +1245,31 @@ class MailboxDashBoardController extends ReloadableController
 
   void clearSelectedEmail() {
     selectedEmail.value = null;
+    _emailNavigationContext = null;
   }
 
   void openEmailDetailedView(PresentationEmail presentationEmail) {
+    final wasSearchRoute = dashboardRoute.value == DashboardRoutes.searchEmail;
+    final currentSession = sessionCurrent;
+    final resolvedAccountId = presentationEmail.mailboxContain?.accountId ??
+        (wasSearchRoute
+            ? accountId.value
+            : selectedMailbox.value?.accountId ?? accountId.value);
+    if (resolvedAccountId != null && currentSession != null) {
+      _emailNavigationContext = EmailNavigationContext(
+        accountId: resolvedAccountId,
+        session: currentSession,
+        source: wasSearchRoute
+            ? (PlatformInfo.isMobile
+                ? EmailNavigationSource.mobileSearch
+                : EmailNavigationSource.webSearch)
+            : (resolvedAccountId == accountId.value
+                ? EmailNavigationSource.primaryMailbox
+                : EmailNavigationSource.delegatedMailbox),
+      );
+    } else {
+      _emailNavigationContext = null;
+    }
     setSelectedEmail(presentationEmail);
     if (isEmailOpened) {
       dashboardRoute.refresh();
@@ -1730,7 +1786,7 @@ class MailboxDashBoardController extends ReloadableController
     final permitted = moveRequest.currentMailboxes.keys.every((sourceId) {
       final source = mapMailboxByKey[MailboxKey(accountId, sourceId)];
       return _canMoveBetween(source, destination);
-    });
+    }) && moveRequest.currentMailboxes.isNotEmpty;
     if (!permitted) _showMoveNotPermittedToast();
     return permitted;
   }
@@ -2023,7 +2079,16 @@ class MailboxDashBoardController extends ReloadableController
       return;
     }
 
-    if (spamMailboxId == null) {
+    final operationSpamMailboxId = currentAccountId == accountId.value
+        ? spamMailboxId
+        : roleMailboxIdInAccount(
+            currentAccountId,
+            [
+              PresentationMailbox.roleJunk,
+              PresentationMailbox.roleSpam,
+            ],
+          );
+    if (operationSpamMailboxId == null) {
       consumeState(Stream.value(
         Left(MoveMultipleEmailToMailboxFailure(
           EmailActionType.unSpam,
@@ -2034,7 +2099,12 @@ class MailboxDashBoardController extends ReloadableController
       return;
     }
 
-    final inboxMailboxId = getMailboxIdByRole(PresentationMailbox.roleInbox);
+    final inboxMailboxId = currentAccountId == accountId.value
+        ? getMailboxIdByRole(PresentationMailbox.roleInbox)
+        : roleMailboxIdInAccount(
+            currentAccountId,
+            [PresentationMailbox.roleInbox],
+          );
     if (inboxMailboxId == null) {
       consumeState(Stream.value(
         Left(MoveMultipleEmailToMailboxFailure(
@@ -2050,7 +2120,7 @@ class MailboxDashBoardController extends ReloadableController
       sessionCurrent!,
       currentAccountId,
       MoveToMailboxRequest(
-        {spamMailboxId!: listEmail.listEmailIds},
+        {operationSpamMailboxId: listEmail.listEmailIds},
         inboxMailboxId,
         MoveAction.moving,
         EmailActionType.unSpam),
@@ -2080,19 +2150,35 @@ class MailboxDashBoardController extends ReloadableController
     }
     final currentMailboxes = <MailboxId, List<EmailId>>{};
     for (final email in emailsInThreadDetailInfo) {
-      final mailboxIdContain = email.mailboxIdContain;
-      if (mailboxIdContain == null) continue;
+      MailboxId? mailboxIdContain;
+      for (final entry in email.mailboxIds?.entries ??
+          const <MapEntry<MailboxId, bool>>[]) {
+        if (entry.value &&
+            getMailboxByIdInAccount(currentAccountId, entry.key) != null) {
+          mailboxIdContain = entry.key;
+          break;
+        }
+      }
+      if (mailboxIdContain == null) {
+        emitMoveEmailFailure(emailActionType);
+        return;
+      }
 
       currentMailboxes.putIfAbsent(mailboxIdContain, () => []).add(email.emailId);
+    }
+    if (currentMailboxes.isEmpty) {
+      emitMoveEmailFailure(emailActionType);
+      return;
     }
     final moveRequest = MoveToMailboxRequest(
       currentMailboxes,
       destinationMailboxId,
       MoveAction.moving,
       emailActionType,
-      destinationPath: currentContext == null
-          ? mapMailboxById[destinationMailboxId]?.name?.name
-          : mapMailboxById[destinationMailboxId]?.getDisplayName(currentContext!),
+      destinationPath: getMailboxDisplayPathByIdInAccount(
+        currentAccountId,
+        destinationMailboxId,
+      ),
     );
     final emailIdsWithReadStatus = Map.fromEntries(
       emailsInThreadDetailInfo.map(
@@ -2306,6 +2392,9 @@ class MailboxDashBoardController extends ReloadableController
 
   void dispatchRoute(DashboardRoutes route) {
     log('MailboxDashBoardController::dispatchRoute(): $route');
+    if (route != DashboardRoutes.threadDetailed) {
+      _emailNavigationContext = null;
+    }
     dashboardRoute.value = route;
   }
 
@@ -3434,6 +3523,7 @@ class MailboxDashBoardController extends ReloadableController
           AppRoutes.dashboard,
           router: NavigationRouter(
             emailId: selectedEmail.value?.id,
+            emailAccountId: _emailNavigationContext?.accountId,
             mailboxId: isSearchRunning
               ? null
               : currentMailbox?.browserRouteMailboxId,
@@ -3566,7 +3656,10 @@ class MailboxDashBoardController extends ReloadableController
       archiveMailboxId,
       MoveAction.moving,
       EmailActionType.moveToMailbox,
-      destinationPath: getMailboxNameById(archiveMailboxId),
+      destinationPath: getMailboxDisplayPathByIdInAccount(
+        currentAccountId,
+        archiveMailboxId,
+      ),
     );
     moveToMailbox(
       sessionCurrent!,

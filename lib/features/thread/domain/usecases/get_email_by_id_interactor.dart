@@ -58,9 +58,11 @@ class GetEmailByIdInteractor {
   ) async* {
     try {
       final email = await _threadRepository.getEmailById(session, accountId, emailId, properties: properties);
-      yield Right<Failure, Success>(
-        GetEmailByIdSuccess(email, mailboxContain: mailboxContain)
-      );
+      yield Right<Failure, Success>(GetEmailByIdSuccess(
+        email,
+        accountId: accountId,
+        mailboxContain: mailboxContain,
+      ));
     } catch (e) {
       logWarning('GetEmailByIdInteractor::_getEmailByIdFromServer():EXCEPTION: $e');
       yield Left<Failure, Success>(GetEmailByIdFailure(e));
@@ -78,7 +80,10 @@ class GetEmailByIdInteractor {
   ) async* {
     try {
       final email = await _emailRepository.getStoredEmail(session, accountId, emailId);
-      yield Right<Failure, Success>(GetEmailByIdSuccess(email.toPresentationEmail()));
+      yield Right<Failure, Success>(GetEmailByIdSuccess(
+        email.toPresentationEmail(),
+        accountId: accountId,
+      ));
     } catch (e) {
       logWarning('GetEmailByIdInteractor::_tryToGetEmailFromCache():EXCEPTION: $e');
       yield* _getEmailByIdFromServer(session, accountId, emailId, properties: properties);

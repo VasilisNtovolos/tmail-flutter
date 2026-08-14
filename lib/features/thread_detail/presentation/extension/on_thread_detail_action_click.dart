@@ -94,36 +94,48 @@ extension OnThreadDetailActionClick on ThreadDetailController {
         _moveToMailbox(mailboxId, threadDetailActionType);
         break;
       case EmailActionType.moveToTrash:
-        final mailboxId = mailboxDashBoardController.getMailboxIdByRole(
+        final mailboxId = getMailboxIdByRole(
           PresentationMailbox.roleTrash,
         );
-        if (mailboxId == null) return;
+        if (mailboxId == null) {
+          mailboxDashBoardController.emitMoveEmailFailure(threadDetailActionType);
+          return;
+        }
 
         _moveToMailbox(mailboxId, threadDetailActionType);
         break;
       case EmailActionType.archiveMessage:
-        final mailboxId = mailboxDashBoardController.getMailboxIdByRole(
+        final mailboxId = getMailboxIdByRole(
           PresentationMailbox.roleArchive,
         );
-        if (mailboxId == null) return;
+        if (mailboxId == null) {
+          mailboxDashBoardController.emitMoveEmailFailure(threadDetailActionType);
+          return;
+        }
 
         _moveToMailbox(mailboxId, threadDetailActionType);
         break;
       case EmailActionType.moveToSpam:
-        final mailboxId = mailboxDashBoardController.getMailboxIdByRole(
+        final mailboxId = getMailboxIdByRole(
           PresentationMailbox.roleJunk,
-        ) ?? mailboxDashBoardController.getMailboxIdByRole(
+        ) ?? getMailboxIdByRole(
           PresentationMailbox.roleSpam,
         );
-        if (mailboxId == null) return;
+        if (mailboxId == null) {
+          mailboxDashBoardController.emitMoveEmailFailure(threadDetailActionType);
+          return;
+        }
 
         _moveToMailbox(mailboxId, threadDetailActionType);
         break;
       case EmailActionType.unSpam:
-        final mailboxId = mailboxDashBoardController.getMailboxIdByRole(
+        final mailboxId = getMailboxIdByRole(
           PresentationMailbox.roleInbox,
         );
-        if (mailboxId == null) return;
+        if (mailboxId == null) {
+          mailboxDashBoardController.emitMoveEmailFailure(threadDetailActionType);
+          return;
+        }
 
         _moveToMailbox(mailboxId, threadDetailActionType);
         break;

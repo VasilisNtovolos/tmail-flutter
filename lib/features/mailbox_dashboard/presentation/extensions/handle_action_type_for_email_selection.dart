@@ -14,6 +14,8 @@ import 'package:tmail_ui_user/features/home/data/exceptions/session_exceptions.d
 import 'package:tmail_ui_user/features/mailbox/presentation/extensions/presentation_mailbox_extension.dart';
 import 'package:tmail_ui_user/features/mailbox_dashboard/presentation/controller/mailbox_dashboard_controller.dart';
 import 'package:tmail_ui_user/features/mailbox_dashboard/presentation/extensions/get_trash_mailbox_id_and_path_extension.dart';
+import 'package:tmail_ui_user/features/mailbox_dashboard/presentation/extensions/get_mailbox_contain_extension.dart';
+import 'package:tmail_ui_user/features/mailbox_dashboard/presentation/model/dashboard_routes.dart';
 import 'package:tmail_ui_user/features/thread/domain/state/move_multiple_email_to_mailbox_state.dart';
 import 'package:tmail_ui_user/main/routes/route_navigation.dart';
 
@@ -25,6 +27,7 @@ extension HandleActionTypeForEmailSelection on MailboxDashBoardController {
   ) {
     final isInSearchOrVirtualFolder =
         searchController.isSearchEmailRunning ||
+        dashboardRoute.value == DashboardRoutes.searchEmail ||
         selectedMailbox.value?.isVirtualFolder == true;
 
     // In search / virtual-folder mode the selected mailbox does not represent
@@ -132,7 +135,10 @@ extension HandleActionTypeForEmailSelection on MailboxDashBoardController {
 
     final destinationPath = destinationFolderPath ??
         (currentContext != null
-            ? destinationFolderPath ?? mapMailboxById[destinationMailboxId]?.getDisplayName(currentContext!)
+            ? getMailboxDisplayPathByIdInAccount(
+                currentAccountId,
+                destinationMailboxId,
+              )
             : null);
 
     moveSelectedEmailMultipleToMailboxAction(

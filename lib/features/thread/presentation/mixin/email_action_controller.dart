@@ -26,6 +26,7 @@ import 'package:tmail_ui_user/features/home/data/exceptions/session_exceptions.d
 import 'package:tmail_ui_user/features/mailbox/domain/exceptions/mailbox_exception.dart';
 import 'package:tmail_ui_user/features/mailbox/presentation/model/mailbox_actions.dart';
 import 'package:tmail_ui_user/features/mailbox_dashboard/presentation/controller/mailbox_dashboard_controller.dart';
+import 'package:tmail_ui_user/features/mailbox_dashboard/presentation/extensions/get_mailbox_contain_extension.dart';
 import 'package:tmail_ui_user/features/mailbox_dashboard/presentation/extensions/get_trash_mailbox_id_and_path_extension.dart';
 import 'package:tmail_ui_user/features/mailbox_dashboard/presentation/extensions/handle_action_type_for_email_selection.dart';
 import 'package:tmail_ui_user/features/mailbox_dashboard/presentation/extensions/open_and_close_composer_extension.dart';
@@ -66,22 +67,30 @@ mixin EmailActionController {
     );
   }
 
-  void previewEmail(PresentationEmail presentationEmail) {
+  void previewEmail(
+    PresentationEmail presentationEmail, {
+    PresentationMailbox? mailboxContain,
+  }) {
     log('EmailActionController::previewEmail():presentationEmailId: ${presentationEmail.id}');
-    mailboxDashBoardController.openEmailDetailedView(presentationEmail);
+    final operationAccountId =
+        mailboxDashBoardController.emailActionDispatchAccountId;
+    final resolvedMailbox = operationAccountId == null
+        ? null
+        : mailboxDashBoardController.resolveMailboxContainForOperation(
+            presentationEmail,
+            operationAccountId: operationAccountId,
+            cachedMailbox: mailboxContain,
+          );
+    final resolvedEmail = resolvedMailbox == null
+        ? presentationEmail
+        : presentationEmail.copyWith(mailboxContain: resolvedMailbox);
+    mailboxDashBoardController.openEmailDetailedView(resolvedEmail);
   }
 
   void moveToTrash(
     PresentationEmail email, {
     PresentationMailbox? mailboxContain,
   }) {
-    if (mailboxContain == null) {
-      mailboxDashBoardController.emitMoveToTrashFailure(
-        NotFoundMailboxOfEmailException(),
-      );
-      return;
-    }
-
     final session = mailboxDashBoardController.sessionCurrent;
     if (session == null) {
       mailboxDashBoardController.emitMoveToTrashFailure(
@@ -98,8 +107,21 @@ mixin EmailActionController {
       return;
     }
 
+    final resolvedMailbox = mailboxDashBoardController
+        .resolveMailboxContainForOperation(
+      email,
+      operationAccountId: accountId,
+      cachedMailbox: mailboxContain,
+    );
+    if (resolvedMailbox == null) {
+      mailboxDashBoardController.emitMoveToTrashFailure(
+        NotFoundMailboxOfEmailException(),
+      );
+      return;
+    }
+
     final (:trashId, :trashPath) =
-        mailboxDashBoardController.getTrashMailboxIdAndPath(mailboxContain);
+        mailboxDashBoardController.getTrashMailboxIdAndPath(resolvedMailbox);
     if (trashId == null) {
       mailboxDashBoardController.emitMoveToTrashFailure(
         NotFoundTrashMailboxException(),
@@ -119,7 +141,7 @@ mixin EmailActionController {
       session,
       accountId,
       MoveToMailboxRequest(
-        {mailboxContain.id: [emailId]},
+        {resolvedMailbox.id: [emailId]},
         trashId,
         MoveAction.moving,
         EmailActionType.moveToTrash,
@@ -157,13 +179,23 @@ mixin EmailActionController {
             PresentationMailbox.roleSpam,
           ])
         : mailboxDashBoardController.spamMailboxId;
+    final resolvedMailbox = accountId == null
+        ? null
+        : mailboxDashBoardController.resolveMailboxContainForOperation(
+            email,
+            operationAccountId: accountId,
+            cachedMailbox: mailboxContain,
+          );
 
-    if (session != null && mailboxContain != null && accountId != null && spamMailboxId != null) {
+    if (session != null &&
+        resolvedMailbox != null &&
+        accountId != null &&
+        spamMailboxId != null) {
       moveToSpamAction(
         session,
         accountId,
         MoveToMailboxRequest(
-          {mailboxContain.id: email.id != null ? [email.id!] : []},
+          {resolvedMailbox.id: email.id != null ? [email.id!] : []},
           spamMailboxId,
           MoveAction.moving,
           EmailActionType.moveToSpam),
@@ -179,20 +211,47 @@ mixin EmailActionController {
   void unSpam(PresentationEmail email) async {
     final session = mailboxDashBoardController.sessionCurrent;
     final accountId = mailboxDashBoardController.emailActionDispatchAccountId;
-    final spamMailboxId = mailboxDashBoardController.spamMailboxId;
-    final inboxMailboxId = mailboxDashBoardController.getMailboxIdByRole(PresentationMailbox.roleInbox);
+    final isDelegated =
+        accountId != null && accountId != mailboxDashBoardController.accountId.value;
+    final spamMailboxId = isDelegated
+        ? mailboxDashBoardController.roleMailboxIdInAccount(accountId, [
+            PresentationMailbox.roleJunk,
+            PresentationMailbox.roleSpam,
+          ])
+        : mailboxDashBoardController.spamMailboxId;
+    final inboxMailboxId = isDelegated
+        ? mailboxDashBoardController.roleMailboxIdInAccount(
+            accountId,
+            [PresentationMailbox.roleInbox],
+          )
+        : mailboxDashBoardController.getMailboxIdByRole(
+            PresentationMailbox.roleInbox,
+          );
+    final currentMailbox = accountId == null
+        ? null
+        : mailboxDashBoardController.resolveMailboxContainForOperation(
+            email,
+            operationAccountId: accountId,
+            cachedMailbox: email.mailboxContain,
+          );
 
-    if (session != null && inboxMailboxId != null && accountId != null && spamMailboxId != null) {
+    if (session != null &&
+        inboxMailboxId != null &&
+        accountId != null &&
+        spamMailboxId != null &&
+        currentMailbox != null) {
       moveToSpamAction(
         session,
         accountId,
         MoveToMailboxRequest(
-          {spamMailboxId: email.id != null ? [email.id!] : []},
+          {currentMailbox.id: email.id != null ? [email.id!] : []},
           inboxMailboxId,
           MoveAction.moving,
           EmailActionType.unSpam),
         email.id != null ? {email.id! : email.hasRead} : {},
       );
+    } else {
+      mailboxDashBoardController.emitMoveEmailFailure(EmailActionType.unSpam);
     }
   }
 
@@ -220,12 +279,27 @@ mixin EmailActionController {
     final accountId = mailboxDashBoardController.emailActionDispatchAccountId;
     final session = mailboxDashBoardController.sessionCurrent;
 
-    if (mailboxContain != null && accountId != null) {
+    final resolvedMailbox = accountId == null
+        ? null
+        : mailboxDashBoardController.resolveMailboxContainForOperation(
+            email,
+            operationAccountId: accountId,
+            cachedMailbox: mailboxContain,
+          );
+
+    if (resolvedMailbox == null) {
+      mailboxDashBoardController.emitMoveEmailFailure(
+        EmailActionType.moveToMailbox,
+      );
+      return;
+    }
+
+    if (accountId != null) {
       final arguments = DestinationPickerArguments(
         accountId,
         MailboxActions.moveEmail,
         session,
-        mailboxIdSelected: mailboxContain.mailboxId);
+        mailboxIdSelected: resolvedMailbox.mailboxId);
 
       final destinationMailbox = PlatformInfo.isWeb
         ? await DialogRouter().pushGeneralDialog(routeName: AppRoutes.destinationPicker, arguments: arguments)
@@ -239,7 +313,7 @@ mixin EmailActionController {
           accountId,
           mailboxDashBoardController.sessionCurrent!,
           email,
-          mailboxContain,
+           resolvedMailbox,
           destinationMailbox);
       }
     }

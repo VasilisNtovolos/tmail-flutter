@@ -9,6 +9,8 @@ import 'package:flutter/widgets.dart' hide State;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:get/get.dart';
 import 'package:jmap_dart_client/jmap/account_id.dart';
+import 'package:jmap_dart_client/jmap/core/account/account.dart';
+import 'package:jmap_dart_client/jmap/core/capability/capability_identifier.dart';
 import 'package:jmap_dart_client/jmap/core/id.dart';
 import 'package:jmap_dart_client/jmap/core/utc_date.dart';
 import 'package:jmap_dart_client/jmap/core/session/session.dart';
@@ -42,6 +44,7 @@ import 'package:tmail_ui_user/features/email/domain/usecases/get_restored_delete
 import 'package:tmail_ui_user/features/email/domain/usecases/mark_as_email_read_interactor.dart';
 import 'package:tmail_ui_user/features/email/domain/usecases/mark_as_star_email_interactor.dart';
 import 'package:tmail_ui_user/features/email/domain/usecases/move_to_mailbox_interactor.dart';
+import 'package:tmail_ui_user/features/email/domain/model/move_to_mailbox_request.dart';
 import 'package:tmail_ui_user/features/email/domain/usecases/restore_deleted_message_interactor.dart';
 import 'package:tmail_ui_user/features/email/domain/usecases/unsubscribe_email_interactor.dart';
 import 'package:tmail_ui_user/features/home/domain/usecases/get_session_interactor.dart';
@@ -59,6 +62,7 @@ import 'package:tmail_ui_user/features/login/domain/usecases/get_token_oidc_inte
 import 'package:tmail_ui_user/features/login/domain/usecases/update_account_cache_interactor.dart';
 import 'package:tmail_ui_user/features/mailbox/domain/exceptions/empty_folder_name_exception.dart';
 import 'package:tmail_ui_user/features/mailbox/domain/exceptions/invalid_mail_format_exception.dart';
+import 'package:tmail_ui_user/features/mailbox/domain/state/get_all_mailboxes_state.dart';
 import 'package:tmail_ui_user/features/mailbox/domain/usecases/clear_mailbox_interactor.dart';
 import 'package:tmail_ui_user/features/mailbox/domain/usecases/create_new_default_mailbox_interactor.dart';
 import 'package:tmail_ui_user/features/mailbox/domain/usecases/create_new_mailbox_interactor.dart';
@@ -84,12 +88,16 @@ import 'package:tmail_ui_user/features/mailbox_dashboard/domain/usecases/remove_
 import 'package:tmail_ui_user/features/mailbox_dashboard/domain/usecases/remove_email_drafts_interactor.dart';
 import 'package:tmail_ui_user/features/mailbox_dashboard/domain/usecases/save_recent_search_interactor.dart';
 import 'package:tmail_ui_user/features/mailbox_dashboard/domain/usecases/store_email_sort_order_interactor.dart';
+import 'package:tmail_ui_user/features/mailbox_dashboard/presentation/action/dashboard_action.dart';
 import 'package:tmail_ui_user/features/mailbox_dashboard/presentation/action/download_ui_action.dart';
 import 'package:tmail_ui_user/features/mailbox_dashboard/presentation/controller/advanced_filter_controller.dart';
 import 'package:tmail_ui_user/features/mailbox_dashboard/presentation/controller/app_grid_dashboard_controller.dart';
 import 'package:tmail_ui_user/features/mailbox_dashboard/presentation/controller/mailbox_dashboard_controller.dart';
 import 'package:tmail_ui_user/features/mailbox_dashboard/presentation/controller/search_controller.dart';
 import 'package:tmail_ui_user/features/mailbox_dashboard/presentation/controller/spam_report_controller.dart';
+import 'package:tmail_ui_user/features/mailbox_dashboard/presentation/extensions/get_trash_mailbox_id_and_path_extension.dart';
+import 'package:tmail_ui_user/features/mailbox_dashboard/presentation/extensions/get_mailbox_contain_extension.dart';
+import 'package:tmail_ui_user/features/mailbox_dashboard/presentation/model/dashboard_routes.dart';
 import 'package:tmail_ui_user/features/mailbox_dashboard/presentation/model/search/email_receive_time_type.dart';
 import 'package:tmail_ui_user/features/mailbox_dashboard/presentation/model/search/email_sort_order_type.dart';
 import 'package:tmail_ui_user/features/mailbox_dashboard/presentation/model/search/search_email_filter.dart';
@@ -103,6 +111,7 @@ import 'package:tmail_ui_user/features/sending_queue/domain/usecases/get_all_sen
 import 'package:tmail_ui_user/features/sending_queue/domain/usecases/store_sending_email_interactor.dart';
 import 'package:tmail_ui_user/features/sending_queue/domain/usecases/update_sending_email_interactor.dart';
 import 'package:tmail_ui_user/features/thread/domain/constants/thread_constants.dart';
+import 'package:tmail_ui_user/features/thread/domain/state/get_email_by_id_state.dart';
 import 'package:tmail_ui_user/features/thread/domain/model/filter_message_option.dart';
 import 'package:tmail_ui_user/features/thread/domain/model/search_query.dart';
 import 'package:tmail_ui_user/features/thread/domain/usecases/clean_and_get_emails_in_mailbox_interactor.dart';
@@ -119,13 +128,17 @@ import 'package:tmail_ui_user/features/thread/domain/usecases/search_more_email_
 import 'package:tmail_ui_user/features/mailbox_dashboard/presentation/extensions/handle_store_email_sort_order_extension.dart';
 import 'package:tmail_ui_user/features/thread/presentation/extensions/handle_email_filter_extension.dart';
 import 'package:tmail_ui_user/features/thread/presentation/thread_controller.dart';
+import 'package:tmail_ui_user/features/thread_detail/domain/model/email_in_thread_detail_info.dart';
 import 'package:tmail_ui_user/main/bindings/network/binding_tag.dart';
+import 'package:tmail_ui_user/main/routes/navigation_router.dart';
+import 'package:tmail_ui_user/main/routes/route_utils.dart';
 import 'package:tmail_ui_user/main/utils/email_receive_manager.dart';
 import 'package:tmail_ui_user/main/utils/toast_manager.dart';
 import 'package:tmail_ui_user/main/utils/twake_app_manager.dart';
 import 'package:uuid/uuid.dart';
 
 import 'mailbox_dashboard_controller_test.mocks.dart';
+import '../../../../fixtures/session_fixtures.dart';
 
 mockControllerCallback() => InternalFinalCallback<void>(callback: () {});
 const fallbackGenerators = {
@@ -330,6 +343,46 @@ void main() {
       Session({}, {}, {}, UserName('data'), google, google, google, google, State('1'));
   final testMailboxId = MailboxId(Id('1'));
   final testAccountId = AccountId(Id('123'));
+
+  Session navigationSession(
+    AccountId delegatedAccountId, {
+    bool includeDelegatedAccount = true,
+    bool delegatedHasMailCapability = true,
+  }) {
+    final baseSession = SessionFixtures.aliceSession;
+    final sourceAccount = baseSession.accounts.values.first;
+    Account copyAccount({required bool hasMailCapability}) {
+      final capabilities = Map.of(sourceAccount.accountCapabilities);
+      if (!hasMailCapability) {
+        capabilities.remove(CapabilityIdentifier.jmapMail);
+      }
+      return Account(
+        sourceAccount.name,
+        sourceAccount.isPersonal,
+        sourceAccount.isReadOnly,
+        capabilities,
+      );
+    }
+
+    return Session(
+      baseSession.capabilities,
+      {
+        testAccountId: copyAccount(hasMailCapability: true),
+        if (includeDelegatedAccount)
+          delegatedAccountId:
+              copyAccount(hasMailCapability: delegatedHasMailCapability),
+      },
+      baseSession.primaryAccounts.map(
+        (capability, _) => MapEntry(capability, testAccountId),
+      ),
+      baseSession.username,
+      baseSession.apiUrl,
+      baseSession.downloadUrl,
+      baseSession.uploadUrl,
+      baseSession.eventSourceUrl,
+      baseSession.state,
+    );
+  }
 
   setUp(() {
     Get.put<RemoveEmailDraftsInteractor>(removeEmailDraftsInteractor);
@@ -903,6 +956,446 @@ void main() {
       },
     );
 
+    group('explicit email-account deep-link routing', () {
+      ({
+        PresentationMailbox primarySource,
+        PresentationMailbox delegatedSource,
+        PresentationMailbox primaryArchive,
+        PresentationMailbox delegatedArchive,
+        PresentationEmail primaryEmail,
+        PresentationEmail delegatedEmail,
+      }) collisionFixture(AccountId delegatedAccountId) {
+        final sourceId = MailboxId(Id('route-source-collision'));
+        final archiveId = MailboxId(Id('route-archive-collision'));
+        final emailId = EmailId(Id('route-email-collision'));
+        final primarySource = PresentationMailbox(
+          sourceId,
+          accountId: testAccountId,
+        );
+        final delegatedSource = PresentationMailbox(
+          sourceId,
+          accountId: delegatedAccountId,
+          isSharedAccount: true,
+        );
+        final primaryArchive = PresentationMailbox(
+          archiveId,
+          accountId: testAccountId,
+          role: PresentationMailbox.roleArchive,
+          name: MailboxName('Primary route Archive'),
+        );
+        final delegatedArchive = PresentationMailbox(
+          archiveId,
+          accountId: delegatedAccountId,
+          role: PresentationMailbox.roleArchive,
+          name: MailboxName('Delegated route Archive'),
+          isSharedAccount: true,
+        );
+        return (
+          primarySource: primarySource,
+          delegatedSource: delegatedSource,
+          primaryArchive: primaryArchive,
+          delegatedArchive: delegatedArchive,
+          primaryEmail: PresentationEmail(
+            id: emailId,
+            mailboxIds: {sourceId: true},
+            mailboxContain: primarySource,
+          ),
+          delegatedEmail: PresentationEmail(
+            id: emailId,
+            mailboxIds: {sourceId: true},
+            mailboxContain: delegatedSource,
+          ),
+        );
+      }
+
+      void prepareRoute(
+        Session session,
+        ({
+          PresentationMailbox primarySource,
+          PresentationMailbox delegatedSource,
+          PresentationMailbox primaryArchive,
+          PresentationMailbox delegatedArchive,
+          PresentationEmail primaryEmail,
+          PresentationEmail delegatedEmail,
+        }) fixture,
+      ) {
+        clearInteractions(getEmailByIdInteractor);
+        clearInteractions(moveToMailboxInteractor);
+        clearInteractions(moveMultipleEmailToMailboxInteractor);
+        clearInteractions(mockToastManager);
+        clearInteractions(appToast);
+        PlatformInfo.isTestingForWeb = true;
+        addTearDown(() => PlatformInfo.isTestingForWeb = false);
+
+        mailboxDashboardController.sessionCurrent = session;
+        mailboxDashboardController.accountId.value = testAccountId;
+        mailboxDashboardController.setMapMailboxById({
+          fixture.primarySource.id: fixture.primarySource,
+          fixture.primaryArchive.id: fixture.primaryArchive,
+        });
+        mailboxDashboardController.setMapMailboxByKey({
+          MailboxKey(testAccountId, fixture.primarySource.id):
+              fixture.primarySource,
+          MailboxKey(testAccountId, fixture.primaryArchive.id):
+              fixture.primaryArchive,
+          MailboxKey(
+            fixture.delegatedSource.accountId!,
+            fixture.delegatedSource.id,
+          ): fixture.delegatedSource,
+          MailboxKey(
+            fixture.delegatedArchive.accountId!,
+            fixture.delegatedArchive.id,
+          ): fixture.delegatedArchive,
+        });
+        mailboxDashboardController.setMapDefaultMailboxIdByRole({
+          PresentationMailbox.roleInbox: MailboxId(Id('route-inbox')),
+          PresentationMailbox.roleOutbox: MailboxId(Id('route-outbox')),
+          PresentationMailbox.roleDrafts: MailboxId(Id('route-drafts')),
+          PresentationMailbox.roleSent: MailboxId(Id('route-sent')),
+          PresentationMailbox.roleTrash: MailboxId(Id('route-trash')),
+          PresentationMailbox.roleJunk: MailboxId(Id('route-junk')),
+          PresentationMailbox.roleTemplates: MailboxId(Id('route-templates')),
+          PresentationMailbox.roleArchive: fixture.primaryArchive.id,
+        });
+
+        mailboxController.onInit();
+        addTearDown(mailboxController.onClose);
+      }
+
+      void stubFetch() {
+        when(
+          getEmailByIdInteractor.execute(
+            any,
+            any,
+            any,
+            properties: anyNamed('properties'),
+            mailboxContain: anyNamed('mailboxContain'),
+          ),
+        ).thenAnswer((_) => const Stream.empty());
+      }
+
+      Future<List<OpenEmailWithoutMailboxFromLocationBar>> openRoute(
+        EmailId emailId, {
+        AccountId? explicitAccountId,
+        bool expectRejection = false,
+      }) async {
+        final actions = <OpenEmailWithoutMailboxFromLocationBar>[];
+        final actionWorker = ever(
+          mailboxDashboardController.dashBoardAction,
+          (action) {
+            if (action is OpenEmailWithoutMailboxFromLocationBar) {
+              actions.add(action);
+            }
+          },
+        );
+        addTearDown(actionWorker.dispose);
+        final routeHandled = expectRejection
+            ? threadController.viewState.stream.firstWhere(
+                (state) => state.fold(
+                  (failure) => failure is GetEmailByIdFailure,
+                  (_) => false,
+                ),
+              )
+            : untilCalled(
+                getEmailByIdInteractor.execute(
+                  any,
+                  any,
+                  any,
+                  properties: anyNamed('properties'),
+                  mailboxContain: anyNamed('mailboxContain'),
+                ),
+              );
+
+        mailboxDashboardController.routerParameters.value = {
+          RouteUtils.paramID: emailId.id.value,
+          if (explicitAccountId != null)
+            RouteUtils.paramAccountContext: explicitAccountId.id.value,
+          RouteUtils.paramType: DashboardType.normal.name,
+        };
+        mailboxController.dispatchState(Right(GetAllMailboxSuccess(
+          mailboxList: const [],
+          currentMailboxState: State('route-ready'),
+        )));
+        mailboxController.onDone();
+        await routeHandled;
+        return actions;
+      }
+
+      void expectArchiveDispatch(
+        AccountId accountId,
+        PresentationEmail email,
+        MailboxId sourceId,
+        MailboxId destinationId,
+      ) {
+        clearInteractions(moveToMailboxInteractor);
+        mailboxDashboardController.archiveMessage(email);
+        final captured = verify(
+          moveToMailboxInteractor.execute(
+            captureAny,
+            captureAny,
+            captureAny,
+            captureAny,
+          ),
+        ).captured;
+        final request = captured[2] as MoveToMailboxRequest;
+        expect(captured[1], accountId);
+        expect(request.currentMailboxes.keys, [sourceId]);
+        expect(request.destinationMailboxId, destinationId);
+      }
+
+      test(
+          'explicit delegated email-only route preserves account through fetch, '
+          'detail context and colliding Archive mutation', () async {
+        final delegatedAccountId = AccountId(Id('route-delegated'));
+        final fixture = collisionFixture(delegatedAccountId);
+        final session = navigationSession(delegatedAccountId);
+        prepareRoute(session, fixture);
+        stubFetch();
+
+        final parsed = RouteUtils.parsingRouteParametersToNavigationRouter({
+          RouteUtils.paramID: fixture.delegatedEmail.id!.id.value,
+          RouteUtils.paramAccountContext: delegatedAccountId.id.value,
+          RouteUtils.paramType: DashboardType.normal.name,
+        });
+        expect(parsed.emailAccountId, delegatedAccountId);
+
+        final actions = await openRoute(
+          fixture.delegatedEmail.id!,
+          explicitAccountId: delegatedAccountId,
+        );
+
+        expect(actions.single.accountId, delegatedAccountId);
+        final fetch = verify(
+          getEmailByIdInteractor.execute(
+            session,
+            captureAny,
+            fixture.delegatedEmail.id!,
+            properties: anyNamed('properties'),
+            mailboxContain: anyNamed('mailboxContain'),
+          ),
+        ).captured;
+        expect(fetch.single, delegatedAccountId);
+        final success = GetEmailByIdSuccess(
+          fixture.delegatedEmail,
+          accountId: delegatedAccountId,
+          mailboxContain: fixture.delegatedSource,
+        );
+        expect(success.accountId, delegatedAccountId);
+        mailboxDashboardController.handleSuccessViewState(success);
+        expect(
+          mailboxDashboardController.emailNavigationContext?.accountId,
+          delegatedAccountId,
+        );
+        expect(
+          mailboxDashboardController.emailNavigationContext?.source,
+          EmailNavigationSource.delegatedMailbox,
+        );
+
+        expectArchiveDispatch(
+          delegatedAccountId,
+          fixture.delegatedEmail,
+          fixture.delegatedSource.id,
+          fixture.delegatedArchive.id,
+        );
+      });
+
+      test('explicit primary email-only route keeps fetch and Archive primary',
+          () async {
+        final delegatedAccountId = AccountId(Id('route-primary-control'));
+        final fixture = collisionFixture(delegatedAccountId);
+        final session = navigationSession(delegatedAccountId);
+        prepareRoute(session, fixture);
+        stubFetch();
+
+        final actions = await openRoute(
+          fixture.primaryEmail.id!,
+          explicitAccountId: testAccountId,
+        );
+
+        expect(actions.single.accountId, testAccountId);
+        verify(
+          getEmailByIdInteractor.execute(
+            session,
+            testAccountId,
+            fixture.primaryEmail.id!,
+            properties: anyNamed('properties'),
+            mailboxContain: anyNamed('mailboxContain'),
+          ),
+        ).called(1);
+        mailboxDashboardController.handleSuccessViewState(GetEmailByIdSuccess(
+          fixture.primaryEmail,
+          accountId: testAccountId,
+          mailboxContain: fixture.primarySource,
+        ));
+        expect(
+          mailboxDashboardController.emailNavigationContext?.accountId,
+          testAccountId,
+        );
+        expectArchiveDispatch(
+          testAccountId,
+          fixture.primaryEmail,
+          fixture.primarySource.id,
+          fixture.primaryArchive.id,
+        );
+      });
+
+      test('legacy email-only route deliberately keeps primary behavior',
+          () async {
+        final delegatedAccountId = AccountId(Id('route-legacy-control'));
+        final fixture = collisionFixture(delegatedAccountId);
+        final session = navigationSession(delegatedAccountId);
+        prepareRoute(session, fixture);
+        stubFetch();
+
+        final actions = await openRoute(fixture.primaryEmail.id!);
+
+        expect(actions.single.accountId, isNull);
+        verify(
+          getEmailByIdInteractor.execute(
+            session,
+            testAccountId,
+            fixture.primaryEmail.id!,
+            properties: anyNamed('properties'),
+            mailboxContain: anyNamed('mailboxContain'),
+          ),
+        ).called(1);
+        mailboxDashboardController.handleSuccessViewState(GetEmailByIdSuccess(
+          fixture.primaryEmail,
+          accountId: testAccountId,
+          mailboxContain: fixture.primarySource,
+        ));
+        expect(
+          mailboxDashboardController.emailNavigationContext?.accountId,
+          testAccountId,
+        );
+        expectArchiveDispatch(
+          testAccountId,
+          fixture.primaryEmail,
+          fixture.primarySource.id,
+          fixture.primaryArchive.id,
+        );
+      });
+
+      test(
+          'explicit removed account route rejects before fetch without primary '
+          'fallback or mutation', () async {
+        final delegatedAccountId = AccountId(Id('route-removed'));
+        final fixture = collisionFixture(delegatedAccountId);
+        prepareRoute(
+          navigationSession(
+            delegatedAccountId,
+            includeDelegatedAccount: false,
+          ),
+          fixture,
+        );
+
+        final actions = await openRoute(
+          fixture.delegatedEmail.id!,
+          explicitAccountId: delegatedAccountId,
+          expectRejection: true,
+        );
+
+        expect(actions.single.accountId, delegatedAccountId);
+        verifyNever(
+          getEmailByIdInteractor.execute(
+            any,
+            any,
+            any,
+            properties: anyNamed('properties'),
+            mailboxContain: anyNamed('mailboxContain'),
+          ),
+        );
+        verifyNever(moveToMailboxInteractor.execute(any, any, any, any));
+        expect(mailboxDashboardController.selectedEmail.value, isNull);
+        expect(
+          threadController.viewState.value.fold(
+            (failure) => failure is GetEmailByIdFailure,
+            (_) => false,
+          ),
+          isTrue,
+        );
+        verifyZeroInteractions(appToast);
+      });
+
+      test(
+          'explicit account without Mail capability rejects before fetch '
+          'without primary fallback or mutation', () async {
+        final delegatedAccountId = AccountId(Id('route-no-mail'));
+        final fixture = collisionFixture(delegatedAccountId);
+        prepareRoute(
+          navigationSession(
+            delegatedAccountId,
+            delegatedHasMailCapability: false,
+          ),
+          fixture,
+        );
+
+        await openRoute(
+          fixture.delegatedEmail.id!,
+          explicitAccountId: delegatedAccountId,
+          expectRejection: true,
+        );
+
+        verifyNever(
+          getEmailByIdInteractor.execute(
+            any,
+            any,
+            any,
+            properties: anyNamed('properties'),
+            mailboxContain: anyNamed('mailboxContain'),
+          ),
+        );
+        verifyNever(moveToMailboxInteractor.execute(any, any, any, any));
+        expect(mailboxDashboardController.selectedEmail.value, isNull);
+        expect(
+          threadController.viewState.value.fold(
+            (failure) => failure is GetEmailByIdFailure,
+            (_) => false,
+          ),
+          isTrue,
+        );
+        verifyZeroInteractions(appToast);
+      });
+
+      test(
+          'same-account Session replacement makes routed detail stale and '
+          'blocks mutation, success feedback and Undo', () async {
+        final delegatedAccountId = AccountId(Id('route-session-replaced'));
+        final fixture = collisionFixture(delegatedAccountId);
+        final session = navigationSession(delegatedAccountId);
+        prepareRoute(session, fixture);
+        stubFetch();
+        await openRoute(
+          fixture.delegatedEmail.id!,
+          explicitAccountId: delegatedAccountId,
+        );
+        mailboxDashboardController.handleSuccessViewState(GetEmailByIdSuccess(
+          fixture.delegatedEmail,
+          accountId: delegatedAccountId,
+          mailboxContain: fixture.delegatedSource,
+        ));
+
+        mailboxDashboardController.sessionCurrent =
+            navigationSession(delegatedAccountId);
+        clearInteractions(moveToMailboxInteractor);
+        clearInteractions(mockToastManager);
+        clearInteractions(appToast);
+        final failureFeedback =
+            untilCalled(mockToastManager.showMessageFailure(any));
+
+        mailboxDashboardController.archiveMessage(fixture.delegatedEmail);
+        await failureFeedback;
+
+        expect(
+          mailboxDashboardController.emailActionDispatchAccountId,
+          isNull,
+        );
+        verifyNever(moveToMailboxInteractor.execute(any, any, any, any));
+        verify(mockToastManager.showMessageFailure(any)).called(1);
+        verifyZeroInteractions(appToast);
+      });
+    });
+
     tearDown(Get.deleteAll);
   });
 
@@ -1003,6 +1496,1089 @@ void main() {
       expect(resolved, isNotNull);
       expect(resolved!.id, equals(delegatedFolder.id));
       expect(resolved.myRights?.mayRemoveItems, isFalse);
+    });
+
+    test(
+        'mailboxContainOf prefers the owning account when mailbox IDs collide',
+        () {
+      final delegatedAccountId = AccountId(Id('delegated-1'));
+      final mailboxId = MailboxId(Id('same-mailbox-id'));
+      final primaryMailbox = PresentationMailbox(
+        mailboxId,
+        accountId: testAccountId,
+      );
+      final delegatedMailbox = PresentationMailbox(
+        mailboxId,
+        accountId: delegatedAccountId,
+        isSharedAccount: true,
+      );
+      final email = PresentationEmail(
+        id: EmailId(Id('collision-email')),
+        mailboxIds: {mailboxId: true},
+      );
+
+      mailboxDashboardController.setMapMailboxById({mailboxId: primaryMailbox});
+      mailboxDashboardController.setMapMailboxByKey({
+        MailboxKey(testAccountId, mailboxId): primaryMailbox,
+        MailboxKey(delegatedAccountId, mailboxId): delegatedMailbox,
+      });
+
+      expect(
+        mailboxDashboardController.mailboxContainOf(
+          email,
+          ownerAccountId: delegatedAccountId,
+        ),
+        same(delegatedMailbox),
+      );
+      expect(
+        mailboxDashboardController.mailboxContainOf(
+          email,
+          ownerAccountId: testAccountId,
+        ),
+        same(primaryMailbox),
+      );
+    });
+
+    test(
+        'delegated bulk unspam uses delegated Spam and Inbox IDs',
+        () {
+      final delegatedAccountId = AccountId(Id('delegated-1'));
+      final primarySpamId = MailboxId(Id('primary-spam'));
+      final delegatedSpamId = MailboxId(Id('delegated-spam'));
+      final primaryInboxId = MailboxId(Id('primary-inbox'));
+      final delegatedInboxId = MailboxId(Id('delegated-inbox'));
+      final delegatedSpam = PresentationMailbox(
+        delegatedSpamId,
+        accountId: delegatedAccountId,
+        role: PresentationMailbox.roleSpam,
+        isSharedAccount: true,
+      );
+      final delegatedInbox = PresentationMailbox(
+        delegatedInboxId,
+        accountId: delegatedAccountId,
+        role: PresentationMailbox.roleInbox,
+        isSharedAccount: true,
+      );
+      final email = PresentationEmail(
+        id: EmailId(Id('delegated-spam-email')),
+        mailboxIds: {delegatedSpamId: true},
+      );
+
+      mailboxDashboardController.accountId.value = testAccountId;
+      mailboxDashboardController.sessionCurrent = testSession;
+      mailboxDashboardController.selectedMailbox.value = delegatedSpam;
+      mailboxDashboardController.setMapDefaultMailboxIdByRole({
+        PresentationMailbox.roleSpam: primarySpamId,
+        PresentationMailbox.roleInbox: primaryInboxId,
+      });
+      mailboxDashboardController.setMapMailboxByKey({
+        MailboxKey(delegatedAccountId, delegatedSpamId): delegatedSpam,
+        MailboxKey(delegatedAccountId, delegatedInboxId): delegatedInbox,
+      });
+
+      mailboxDashboardController.unSpamSelectedMultipleEmail([email]);
+
+      final captured = verify(
+        moveMultipleEmailToMailboxInteractor.execute(
+          captureAny,
+          captureAny,
+          captureAny,
+          captureAny,
+        ),
+      ).captured;
+      final request = captured[2] as MoveToMailboxRequest;
+
+      expect(captured[1], delegatedAccountId);
+      expect(request.currentMailboxes.keys, contains(delegatedSpamId));
+      expect(request.currentMailboxes.keys, isNot(contains(primarySpamId)));
+      expect(request.destinationMailboxId, delegatedInboxId);
+      expect(request.destinationMailboxId, isNot(primaryInboxId));
+    });
+
+    test(
+        'delegated Archive uses the delegated mailbox path when IDs collide',
+        () {
+      final delegatedAccountId = AccountId(Id('delegated-1'));
+      final sourceId = MailboxId(Id('archive-source'));
+      final archiveId = MailboxId(Id('same-archive-id'));
+      final primarySource = PresentationMailbox(
+        sourceId,
+        accountId: testAccountId,
+      );
+      final delegatedSource = PresentationMailbox(
+        sourceId,
+        accountId: delegatedAccountId,
+        isSharedAccount: true,
+      );
+      final primaryArchive = PresentationMailbox(
+        archiveId,
+        accountId: testAccountId,
+        role: PresentationMailbox.roleArchive,
+        name: MailboxName('Primary Archive'),
+      );
+      final delegatedArchive = PresentationMailbox(
+        archiveId,
+        accountId: delegatedAccountId,
+        role: PresentationMailbox.roleArchive,
+        name: MailboxName('Delegated Archive'),
+        isSharedAccount: true,
+      );
+      final email = PresentationEmail(
+        id: EmailId(Id('delegated-archive-email')),
+        mailboxIds: {sourceId: true},
+      );
+
+      mailboxDashboardController.accountId.value = testAccountId;
+      mailboxDashboardController.sessionCurrent = testSession;
+      mailboxDashboardController.selectedMailbox.value = delegatedSource;
+      mailboxDashboardController.setMapMailboxById({
+        sourceId: primarySource,
+        archiveId: primaryArchive,
+      });
+      mailboxDashboardController.setMapMailboxByKey({
+        MailboxKey(testAccountId, sourceId): primarySource,
+        MailboxKey(testAccountId, archiveId): primaryArchive,
+        MailboxKey(delegatedAccountId, sourceId): delegatedSource,
+        MailboxKey(delegatedAccountId, archiveId): delegatedArchive,
+      });
+      mailboxDashboardController.setMapDefaultMailboxIdByRole({
+        PresentationMailbox.roleArchive: archiveId,
+      });
+
+      mailboxDashboardController.archiveMessage(email);
+
+      final captured = verify(
+        moveToMailboxInteractor.execute(
+          captureAny,
+          captureAny,
+          captureAny,
+          captureAny,
+        ),
+      ).captured;
+      final request = captured[2] as MoveToMailboxRequest;
+
+      expect(captured[1], delegatedAccountId);
+      expect(request.destinationMailboxId, archiveId);
+      expect(request.destinationPath, 'Delegated Archive');
+    });
+
+    test(
+        'delegated Trash lookup does not fall back to the primary Trash',
+        () {
+      final delegatedAccountId = AccountId(Id('delegated-1'));
+      final primaryTrash = PresentationMailbox(
+        MailboxId(Id('primary-trash')),
+        accountId: testAccountId,
+        role: PresentationMailbox.roleTrash,
+        name: MailboxName('Primary Trash'),
+      );
+      final delegatedTrash = PresentationMailbox(
+        MailboxId(Id('delegated-trash')),
+        accountId: delegatedAccountId,
+        role: PresentationMailbox.roleTrash,
+        name: MailboxName('Delegated Trash'),
+        isSharedAccount: true,
+      );
+      final delegatedSource = PresentationMailbox(
+        MailboxId(Id('delegated-source')),
+        accountId: delegatedAccountId,
+        isSharedAccount: true,
+      );
+
+      mailboxDashboardController.accountId.value = testAccountId;
+      mailboxDashboardController.setMapDefaultMailboxIdByRole({
+        PresentationMailbox.roleTrash: primaryTrash.id,
+      });
+      mailboxDashboardController.setMapMailboxById({
+        primaryTrash.id: primaryTrash,
+      });
+      mailboxDashboardController.setMapMailboxByKey({
+        MailboxKey(testAccountId, primaryTrash.id): primaryTrash,
+        MailboxKey(delegatedAccountId, delegatedTrash.id): delegatedTrash,
+      });
+
+      final result = mailboxDashboardController.getTrashMailboxIdAndPath(
+        delegatedSource,
+      );
+
+      expect(result.trashId, delegatedTrash.id);
+      expect(result.trashPath, 'Delegated Trash');
+    });
+
+    test(
+        'mobile Search route keeps the operation account primary',
+        () {
+      final delegatedAccountId = AccountId(Id('delegated-1'));
+      final delegatedMailbox = PresentationMailbox(
+        MailboxId(Id('delegated-mailbox')),
+        accountId: delegatedAccountId,
+        isSharedAccount: true,
+      );
+
+      mailboxDashboardController.accountId.value = testAccountId;
+      mailboxDashboardController.selectedMailbox.value = delegatedMailbox;
+      mailboxDashboardController.dashboardRoute.value = DashboardRoutes.searchEmail;
+
+      expect(
+        mailboxDashboardController.emailActionDispatchAccountId,
+        testAccountId,
+      );
+    });
+
+    test(
+        'Search-origin detail keeps primary ownership over a delegated selection',
+        () {
+      final delegatedAccountId = AccountId(Id('delegated-search-detail'));
+      final mailboxId = MailboxId(Id('search-detail-mailbox'));
+      final archiveId = MailboxId(Id('search-detail-archive'));
+      final primaryMailbox = PresentationMailbox(
+        mailboxId,
+        accountId: testAccountId,
+      );
+      final delegatedMailbox = PresentationMailbox(
+        mailboxId,
+        accountId: delegatedAccountId,
+        isSharedAccount: true,
+      );
+      final primaryArchive = PresentationMailbox(
+        archiveId,
+        accountId: testAccountId,
+        role: PresentationMailbox.roleArchive,
+      );
+      final email = PresentationEmail(
+        id: EmailId(Id('search-detail-email')),
+        mailboxIds: {mailboxId: true},
+        mailboxContain: primaryMailbox,
+      );
+
+      mailboxDashboardController.accountId.value = testAccountId;
+      mailboxDashboardController.sessionCurrent =
+          navigationSession(delegatedAccountId);
+      mailboxDashboardController.setMapMailboxById({
+        mailboxId: primaryMailbox,
+        archiveId: primaryArchive,
+      });
+      mailboxDashboardController.setMapMailboxByKey({
+        MailboxKey(testAccountId, mailboxId): primaryMailbox,
+        MailboxKey(testAccountId, archiveId): primaryArchive,
+        MailboxKey(delegatedAccountId, mailboxId): delegatedMailbox,
+      });
+      mailboxDashboardController.selectedMailbox.value = delegatedMailbox;
+      mailboxDashboardController.setMapDefaultMailboxIdByRole({
+        PresentationMailbox.roleArchive: archiveId,
+      });
+      when(moveToMailboxInteractor.execute(any, any, any, any))
+          .thenAnswer((_) => const Stream.empty());
+      mailboxDashboardController.dashboardRoute.value =
+          DashboardRoutes.searchEmail;
+      mailboxDashboardController.listResultSearch.assignAll([email]);
+      mailboxDashboardController.openEmailDetailedView(email);
+      final activeSource = mailboxDashboardController.activeEmailSource;
+      expect(activeSource.accountId, testAccountId);
+      expect(activeSource.emails, same(mailboxDashboardController.listResultSearch));
+      expect(activeSource.isSearchResult, isTrue);
+      mailboxDashboardController.archiveMessage(email);
+
+
+      expect(
+        mailboxDashboardController.emailActionDispatchAccountId,
+        testAccountId,
+      );
+      expect(
+        mailboxDashboardController.getMailboxContain(email),
+        same(primaryMailbox),
+      );
+      final captured = verify(
+        moveToMailboxInteractor.execute(
+          captureAny,
+          captureAny,
+          captureAny,
+          captureAny,
+        ),
+      ).captured;
+      final request = captured[2] as MoveToMailboxRequest;
+      expect(captured[1], testAccountId);
+      expect(request.currentMailboxes.keys, [mailboxId]);
+      expect(request.destinationMailboxId, archiveId);
+    });
+
+    test(
+        'Search exit keeps a same-id delegated detail delegated',
+        () {
+      final delegatedAccountId = AccountId(Id('delegated-exit'));
+      final sourceId = MailboxId(Id('same-exit-source'));
+      final archiveId = MailboxId(Id('same-exit-archive'));
+      final primarySource = PresentationMailbox(
+        sourceId,
+        accountId: testAccountId,
+      );
+      final delegatedSource = PresentationMailbox(
+        sourceId,
+        accountId: delegatedAccountId,
+        isSharedAccount: true,
+      );
+      final primaryArchive = PresentationMailbox(
+        archiveId,
+        accountId: testAccountId,
+        role: PresentationMailbox.roleArchive,
+      );
+      final delegatedArchive = PresentationMailbox(
+        archiveId,
+        accountId: delegatedAccountId,
+        role: PresentationMailbox.roleArchive,
+        isSharedAccount: true,
+      );
+      final primaryEmail = PresentationEmail(
+        id: EmailId(Id('same-exit-email')),
+        mailboxIds: {sourceId: true},
+        mailboxContain: primarySource,
+      );
+      final delegatedEmail = PresentationEmail(
+        id: primaryEmail.id,
+        mailboxIds: {sourceId: true},
+      );
+
+      mailboxDashboardController.accountId.value = testAccountId;
+      mailboxDashboardController.sessionCurrent =
+          navigationSession(delegatedAccountId);
+      mailboxDashboardController.selectedMailbox.value = delegatedSource;
+      mailboxDashboardController.setMapMailboxById({
+        sourceId: primarySource,
+        archiveId: primaryArchive,
+      });
+      mailboxDashboardController.setMapMailboxByKey({
+        MailboxKey(testAccountId, sourceId): primarySource,
+        MailboxKey(testAccountId, archiveId): primaryArchive,
+        MailboxKey(delegatedAccountId, sourceId): delegatedSource,
+        MailboxKey(delegatedAccountId, archiveId): delegatedArchive,
+      });
+      mailboxDashboardController.setMapDefaultMailboxIdByRole({
+        PresentationMailbox.roleArchive: archiveId,
+      });
+      when(
+        moveToMailboxInteractor.execute(any, any, any, any),
+      ).thenAnswer((_) => const Stream.empty());
+
+      mailboxDashboardController.dashboardRoute.value =
+          DashboardRoutes.searchEmail;
+      mailboxDashboardController.listResultSearch.assignAll([primaryEmail]);
+      mailboxDashboardController.openEmailDetailedView(primaryEmail);
+      var activeSource = mailboxDashboardController.activeEmailSource;
+      expect(activeSource.accountId, testAccountId);
+      expect(activeSource.emails, same(mailboxDashboardController.listResultSearch));
+      expect(activeSource.isSearchResult, isTrue);
+      mailboxDashboardController.archiveMessage(primaryEmail);
+
+      var captured = verify(
+        moveToMailboxInteractor.execute(
+          captureAny,
+          captureAny,
+          captureAny,
+          captureAny,
+        ),
+      ).captured;
+      var request = captured[2] as MoveToMailboxRequest;
+      expect(captured[1], testAccountId);
+      expect(request.currentMailboxes.keys, [sourceId]);
+      expect(request.destinationMailboxId, archiveId);
+
+      clearInteractions(moveToMailboxInteractor);
+      mailboxDashboardController.dispatchRoute(DashboardRoutes.thread);
+      expect(mailboxDashboardController.emailNavigationContext, isNull);
+      mailboxDashboardController.emailsInCurrentMailbox
+          .assignAll([delegatedEmail]);
+      mailboxDashboardController.selectedMailbox.value = delegatedSource;
+      mailboxDashboardController.openEmailDetailedView(delegatedEmail);
+      activeSource = mailboxDashboardController.activeEmailSource;
+      expect(activeSource.accountId, delegatedAccountId);
+      expect(
+        activeSource.emails,
+        same(mailboxDashboardController.emailsInCurrentMailbox),
+      );
+      expect(
+        activeSource.emails,
+        isNot(same(mailboxDashboardController.listResultSearch)),
+      );
+      expect(activeSource.isSearchResult, isFalse);
+      mailboxDashboardController.archiveMessage(delegatedEmail);
+
+      captured = verify(
+        moveToMailboxInteractor.execute(
+          captureAny,
+          captureAny,
+          captureAny,
+          captureAny,
+        ),
+      ).captured;
+      request = captured[2] as MoveToMailboxRequest;
+      expect(captured[1], delegatedAccountId);
+      expect(request.currentMailboxes.keys, [sourceId]);
+      expect(request.destinationMailboxId, archiveId);
+    });
+
+    test(
+        'replaced Session invalidates the captured detail operation context',
+        () async {
+      final delegatedAccountId = AccountId(Id('delegated-session-replaced'));
+      final sourceId = MailboxId(Id('session-source'));
+      final archiveId = MailboxId(Id('session-archive'));
+      final source = PresentationMailbox(
+        sourceId,
+        accountId: delegatedAccountId,
+        isSharedAccount: true,
+      );
+      final archive = PresentationMailbox(
+        archiveId,
+        accountId: delegatedAccountId,
+        role: PresentationMailbox.roleArchive,
+        isSharedAccount: true,
+      );
+      final email = PresentationEmail(
+        id: EmailId(Id('session-replaced-email')),
+        mailboxIds: {sourceId: true},
+        mailboxContain: source,
+      );
+
+      mailboxDashboardController.accountId.value = testAccountId;
+      mailboxDashboardController.sessionCurrent =
+          navigationSession(delegatedAccountId);
+      mailboxDashboardController.selectedMailbox.value = source;
+      mailboxDashboardController.setMapMailboxByKey({
+        MailboxKey(delegatedAccountId, sourceId): source,
+        MailboxKey(delegatedAccountId, archiveId): archive,
+      });
+      mailboxDashboardController.openEmailDetailedView(email);
+      mailboxDashboardController.sessionCurrent =
+          navigationSession(delegatedAccountId);
+      clearInteractions(moveToMailboxInteractor);
+      clearInteractions(mockToastManager);
+      clearInteractions(appToast);
+      final failureFeedback =
+          untilCalled(mockToastManager.showMessageFailure(any));
+
+      mailboxDashboardController.archiveMessage(email);
+      await failureFeedback;
+
+      expect(mailboxDashboardController.emailActionDispatchAccountId, isNull);
+      verifyNever(moveToMailboxInteractor.execute(any, any, any, any));
+      verifyNever(
+          moveMultipleEmailToMailboxInteractor.execute(any, any, any, any));
+      verify(mockToastManager.showMessageFailure(any)).called(1);
+      verifyZeroInteractions(appToast);
+    });
+
+    group('active source and explicit context validation', () {
+      Future<void> expectArchiveRejected(PresentationEmail email) async {
+        clearInteractions(moveToMailboxInteractor);
+        clearInteractions(moveMultipleEmailToMailboxInteractor);
+        clearInteractions(mockToastManager);
+        clearInteractions(appToast);
+        final failureFeedback =
+            untilCalled(mockToastManager.showMessageFailure(any));
+
+        mailboxDashboardController.archiveMessage(email);
+        await failureFeedback;
+
+        verifyNever(moveToMailboxInteractor.execute(any, any, any, any));
+        verifyNever(
+            moveMultipleEmailToMailboxInteractor.execute(any, any, any, any));
+        verify(mockToastManager.showMessageFailure(any)).called(1);
+        verifyZeroInteractions(appToast);
+      }
+
+      test(
+          'same Session capability loss rejects explicit detail without '
+          'primary fallback, success feedback or Undo', () async {
+        final delegatedAccountId = AccountId(Id('context-capability-loss'));
+        final sourceId = MailboxId(Id('context-capability-source'));
+        final archiveId = MailboxId(Id('context-capability-archive'));
+        final source = PresentationMailbox(
+          sourceId,
+          accountId: delegatedAccountId,
+          isSharedAccount: true,
+        );
+        final archive = PresentationMailbox(
+          archiveId,
+          accountId: delegatedAccountId,
+          role: PresentationMailbox.roleArchive,
+          isSharedAccount: true,
+        );
+        final email = PresentationEmail(
+          id: EmailId(Id('context-capability-email')),
+          mailboxIds: {sourceId: true},
+          mailboxContain: source,
+        );
+        final session = navigationSession(delegatedAccountId);
+
+        mailboxDashboardController.accountId.value = testAccountId;
+        mailboxDashboardController.sessionCurrent = session;
+        mailboxDashboardController.selectedMailbox.value = source;
+        mailboxDashboardController.setMapMailboxByKey({
+          MailboxKey(delegatedAccountId, sourceId): source,
+          MailboxKey(delegatedAccountId, archiveId): archive,
+        });
+        mailboxDashboardController.openEmailDetailedView(email);
+        session.accounts[delegatedAccountId]!.accountCapabilities
+            .remove(CapabilityIdentifier.jmapMail);
+
+        expect(
+          identical(
+            mailboxDashboardController.emailNavigationContext?.session,
+            session,
+          ),
+          isTrue,
+        );
+        expect(
+          mailboxDashboardController.emailActionDispatchAccountId,
+          isNull,
+        );
+        await expectArchiveRejected(email);
+      });
+
+      test(
+          'removed explicit source mailbox rejects despite colliding primary '
+          'source and destination', () async {
+        final delegatedAccountId = AccountId(Id('context-source-removed'));
+        final sourceId = MailboxId(Id('context-source-collision'));
+        final archiveId = MailboxId(Id('context-archive-collision'));
+        final primarySource = PresentationMailbox(
+          sourceId,
+          accountId: testAccountId,
+        );
+        final primaryArchive = PresentationMailbox(
+          archiveId,
+          accountId: testAccountId,
+          role: PresentationMailbox.roleArchive,
+        );
+        final delegatedSource = PresentationMailbox(
+          sourceId,
+          accountId: delegatedAccountId,
+          isSharedAccount: true,
+        );
+        final delegatedArchive = PresentationMailbox(
+          archiveId,
+          accountId: delegatedAccountId,
+          role: PresentationMailbox.roleArchive,
+          isSharedAccount: true,
+        );
+        final email = PresentationEmail(
+          id: EmailId(Id('context-source-email')),
+          mailboxIds: {sourceId: true},
+          mailboxContain: delegatedSource,
+        );
+
+        mailboxDashboardController.accountId.value = testAccountId;
+        mailboxDashboardController.sessionCurrent =
+            navigationSession(delegatedAccountId);
+        mailboxDashboardController.selectedMailbox.value = delegatedSource;
+        mailboxDashboardController.setMapMailboxById({
+          sourceId: primarySource,
+          archiveId: primaryArchive,
+        });
+        mailboxDashboardController.setMapMailboxByKey({
+          MailboxKey(testAccountId, sourceId): primarySource,
+          MailboxKey(testAccountId, archiveId): primaryArchive,
+          MailboxKey(delegatedAccountId, archiveId): delegatedArchive,
+        });
+        mailboxDashboardController.openEmailDetailedView(email);
+
+        expect(
+          mailboxDashboardController.emailActionDispatchAccountId,
+          delegatedAccountId,
+        );
+        await expectArchiveRejected(email);
+      });
+
+      test(
+          'same Session selection change keeps valid explicit context delegated',
+          () {
+        final delegatedAccountId = AccountId(Id('context-selection-control'));
+        final sourceId = MailboxId(Id('context-selection-source'));
+        final archiveId = MailboxId(Id('context-selection-archive'));
+        final primarySelection = PresentationMailbox(
+          MailboxId(Id('context-primary-selection')),
+          accountId: testAccountId,
+        );
+        final source = PresentationMailbox(
+          sourceId,
+          accountId: delegatedAccountId,
+          isSharedAccount: true,
+        );
+        final archive = PresentationMailbox(
+          archiveId,
+          accountId: delegatedAccountId,
+          role: PresentationMailbox.roleArchive,
+          isSharedAccount: true,
+        );
+        final email = PresentationEmail(
+          id: EmailId(Id('context-selection-email')),
+          mailboxIds: {sourceId: true},
+          mailboxContain: source,
+        );
+        final session = navigationSession(delegatedAccountId);
+
+        mailboxDashboardController.accountId.value = testAccountId;
+        mailboxDashboardController.sessionCurrent = session;
+        mailboxDashboardController.selectedMailbox.value = source;
+        mailboxDashboardController.setMapMailboxByKey({
+          MailboxKey(delegatedAccountId, sourceId): source,
+          MailboxKey(delegatedAccountId, archiveId): archive,
+        });
+        mailboxDashboardController.openEmailDetailedView(email);
+        mailboxDashboardController.selectedMailbox.value = primarySelection;
+        when(moveToMailboxInteractor.execute(any, any, any, any))
+            .thenAnswer((_) => const Stream.empty());
+        clearInteractions(moveToMailboxInteractor);
+
+        mailboxDashboardController.archiveMessage(email);
+
+        final captured = verify(
+          moveToMailboxInteractor.execute(
+            captureAny,
+            captureAny,
+            captureAny,
+            captureAny,
+          ),
+        ).captured;
+        final request = captured[2] as MoveToMailboxRequest;
+        expect(
+          identical(
+            mailboxDashboardController.emailNavigationContext?.session,
+            session,
+          ),
+          isTrue,
+        );
+        expect(captured[1], delegatedAccountId);
+        expect(request.currentMailboxes.keys, [sourceId]);
+        expect(request.destinationMailboxId, archiveId);
+      });
+
+      test(
+          'closed Search controller leaves explicit Search detail primary and '
+          'mutation usable', () async {
+        final delegatedAccountId = AccountId(Id('closed-search-delegated'));
+        final sourceId = MailboxId(Id('closed-search-source'));
+        final archiveId = MailboxId(Id('closed-search-archive'));
+        final source = PresentationMailbox(
+          sourceId,
+          accountId: testAccountId,
+        );
+        final archive = PresentationMailbox(
+          archiveId,
+          accountId: testAccountId,
+          role: PresentationMailbox.roleArchive,
+        );
+        final email = PresentationEmail(
+          id: EmailId(Id('closed-search-email')),
+          mailboxIds: {sourceId: true},
+          mailboxContain: source,
+        );
+        if (Get.isRegistered<SearchController>()) {
+          await Get.delete<SearchController>();
+        }
+        Get.put<SearchController>(searchController);
+        addTearDown(() async {
+          if (Get.isRegistered<SearchController>()) {
+            await Get.delete<SearchController>();
+          }
+        });
+
+        mailboxDashboardController.accountId.value = testAccountId;
+        mailboxDashboardController.sessionCurrent =
+            navigationSession(delegatedAccountId);
+        mailboxDashboardController.setMapMailboxById({
+          sourceId: source,
+          archiveId: archive,
+        });
+        mailboxDashboardController.setMapMailboxByKey({
+          MailboxKey(testAccountId, sourceId): source,
+          MailboxKey(testAccountId, archiveId): archive,
+        });
+        mailboxDashboardController.setMapDefaultMailboxIdByRole({
+          PresentationMailbox.roleArchive: archiveId,
+        });
+        mailboxDashboardController.dashboardRoute.value =
+            DashboardRoutes.searchEmail;
+        mailboxDashboardController.listResultSearch.assignAll([email]);
+        mailboxDashboardController.openEmailDetailedView(email);
+        await Get.delete<SearchController>();
+
+        final activeSource = mailboxDashboardController.activeEmailSource;
+        expect(searchController.isClosed, isTrue);
+        expect(activeSource.accountId, testAccountId);
+        expect(activeSource.emails, same(mailboxDashboardController.listResultSearch));
+        expect(activeSource.isSearchResult, isTrue);
+        when(moveToMailboxInteractor.execute(any, any, any, any))
+            .thenAnswer((_) => const Stream.empty());
+        clearInteractions(moveToMailboxInteractor);
+
+        mailboxDashboardController.archiveMessage(email);
+
+        final captured = verify(
+          moveToMailboxInteractor.execute(
+            captureAny,
+            captureAny,
+            captureAny,
+            captureAny,
+          ),
+        ).captured;
+        final request = captured[2] as MoveToMailboxRequest;
+        expect(captured[1], testAccountId);
+        expect(request.currentMailboxes.keys, [sourceId]);
+        expect(request.destinationMailboxId, archiveId);
+      });
+
+      test('primary non-Search detail keeps normal collection and mutation',
+          () {
+        final delegatedAccountId = AccountId(Id('primary-source-control'));
+        final sourceId = MailboxId(Id('primary-source-mailbox'));
+        final archiveId = MailboxId(Id('primary-source-archive'));
+        final source = PresentationMailbox(
+          sourceId,
+          accountId: testAccountId,
+        );
+        final archive = PresentationMailbox(
+          archiveId,
+          accountId: testAccountId,
+          role: PresentationMailbox.roleArchive,
+        );
+        final email = PresentationEmail(
+          id: EmailId(Id('primary-source-email')),
+          mailboxIds: {sourceId: true},
+          mailboxContain: source,
+        );
+
+        mailboxDashboardController.accountId.value = testAccountId;
+        mailboxDashboardController.sessionCurrent =
+            navigationSession(delegatedAccountId);
+        mailboxDashboardController.setMapMailboxById({
+          sourceId: source,
+          archiveId: archive,
+        });
+        mailboxDashboardController.setMapMailboxByKey({
+          MailboxKey(testAccountId, sourceId): source,
+          MailboxKey(testAccountId, archiveId): archive,
+        });
+        mailboxDashboardController.setMapDefaultMailboxIdByRole({
+          PresentationMailbox.roleArchive: archiveId,
+        });
+        mailboxDashboardController.selectedMailbox.value = source;
+        mailboxDashboardController.emailsInCurrentMailbox.assignAll([email]);
+        mailboxDashboardController.dispatchRoute(DashboardRoutes.thread);
+        mailboxDashboardController.openEmailDetailedView(email);
+
+        final activeSource = mailboxDashboardController.activeEmailSource;
+        expect(activeSource.accountId, testAccountId);
+        expect(
+          activeSource.emails,
+          same(mailboxDashboardController.emailsInCurrentMailbox),
+        );
+        expect(activeSource.isSearchResult, isFalse);
+        when(moveToMailboxInteractor.execute(any, any, any, any))
+            .thenAnswer((_) => const Stream.empty());
+        clearInteractions(moveToMailboxInteractor);
+
+        mailboxDashboardController.archiveMessage(email);
+
+        final captured = verify(
+          moveToMailboxInteractor.execute(
+            captureAny,
+            captureAny,
+            captureAny,
+            captureAny,
+          ),
+        ).captured;
+        final request = captured[2] as MoveToMailboxRequest;
+        expect(captured[1], testAccountId);
+        expect(request.currentMailboxes.keys, [sourceId]);
+        expect(request.destinationMailboxId, archiveId);
+      });
+    });
+
+    test(
+        'Single Email containment ignores stale and virtual selections',
+        () {
+      final delegatedAccountId = AccountId(Id('delegated-1'));
+      final mailboxA = PresentationMailbox(
+        MailboxId(Id('mailbox-a')),
+        accountId: delegatedAccountId,
+        isSharedAccount: true,
+      );
+      final mailboxB = PresentationMailbox(
+        MailboxId(Id('mailbox-b')),
+        accountId: delegatedAccountId,
+        isSharedAccount: true,
+      );
+      final email = PresentationEmail(
+        id: EmailId(Id('email-a')),
+        mailboxIds: {mailboxA.id: true},
+        mailboxContain: mailboxA,
+      );
+
+      mailboxDashboardController.accountId.value = testAccountId;
+      mailboxDashboardController.sessionCurrent =
+          navigationSession(delegatedAccountId);
+      mailboxDashboardController.setMapMailboxByKey({
+        MailboxKey(delegatedAccountId, mailboxA.id): mailboxA,
+        MailboxKey(delegatedAccountId, mailboxB.id): mailboxB,
+      });
+
+      mailboxDashboardController.selectedMailbox.value = mailboxA;
+      mailboxDashboardController.openEmailDetailedView(email);
+      mailboxDashboardController.selectedMailbox.value = mailboxB;
+      expect(
+        mailboxDashboardController.getMailboxContain(email),
+        same(mailboxA),
+      );
+
+      mailboxDashboardController.selectedMailbox.value =
+          PresentationMailbox.favoriteFolder;
+      expect(
+        mailboxDashboardController.getMailboxContain(email),
+        same(mailboxA),
+      );
+    });
+
+    test(
+        'displayed delegated email ownership overrides a stale same-id primary selection',
+        () {
+      final delegatedAccountId = AccountId(Id('delegated-display'));
+      final mailboxId = MailboxId(Id('same-display-mailbox'));
+      final primaryMailbox = PresentationMailbox(
+        mailboxId,
+        accountId: testAccountId,
+      );
+      final delegatedMailbox = PresentationMailbox(
+        mailboxId,
+        accountId: delegatedAccountId,
+        isSharedAccount: true,
+      );
+      final email = PresentationEmail(
+        id: EmailId(Id('displayed-delegated-email')),
+        mailboxIds: {mailboxId: true},
+        mailboxContain: delegatedMailbox,
+      );
+
+      mailboxDashboardController.accountId.value = testAccountId;
+      mailboxDashboardController.sessionCurrent =
+          navigationSession(delegatedAccountId);
+      mailboxDashboardController.setMapMailboxById({mailboxId: primaryMailbox});
+      mailboxDashboardController.setMapMailboxByKey({
+        MailboxKey(testAccountId, mailboxId): primaryMailbox,
+        MailboxKey(delegatedAccountId, mailboxId): delegatedMailbox,
+      });
+      mailboxDashboardController.selectedMailbox.value = primaryMailbox;
+      mailboxDashboardController.openEmailDetailedView(email);
+
+      expect(
+        mailboxDashboardController.emailActionDispatchAccountId,
+        delegatedAccountId,
+      );
+      expect(
+        mailboxDashboardController.getMailboxContain(email),
+        same(delegatedMailbox),
+      );
+    });
+
+    test(
+        'Thread Detail move rejects an empty source mailbox map',
+        () {
+      mailboxDashboardController.accountId.value = testAccountId;
+      mailboxDashboardController.sessionCurrent = testSession;
+      clearInteractions(moveMultipleEmailToMailboxInteractor);
+
+      mailboxDashboardController.moveMultipleEmailInThreadDetail(
+        [
+          EmailInThreadDetailInfo(
+            emailId: EmailId(Id('missing-source-email')),
+            keywords: const {},
+            mailboxIds: const {},
+            isValidToDisplay: true,
+          ),
+        ],
+        destinationMailboxId: MailboxId(Id('destination')),
+        emailActionType: EmailActionType.moveToSpam,
+      );
+
+      verifyNever(
+        moveMultipleEmailToMailboxInteractor.execute(any, any, any, any),
+      );
+    });
+
+    test(
+        'Thread Detail move keeps delegated sources and destination in one account',
+        () {
+      final delegatedAccountId = AccountId(Id('delegated-thread'));
+      final sourceId = MailboxId(Id('thread-source'));
+      final destinationId = MailboxId(Id('thread-destination'));
+      final primarySource = PresentationMailbox(
+        sourceId,
+        accountId: testAccountId,
+      );
+      final delegatedSource = PresentationMailbox(
+        sourceId,
+        accountId: delegatedAccountId,
+        isSharedAccount: true,
+      );
+      final delegatedDestination = PresentationMailbox(
+        destinationId,
+        accountId: delegatedAccountId,
+        isSharedAccount: true,
+      );
+
+      mailboxDashboardController.accountId.value = testAccountId;
+      mailboxDashboardController.sessionCurrent = testSession;
+      mailboxDashboardController.selectedMailbox.value = delegatedSource;
+      mailboxDashboardController.setMapMailboxByKey({
+        MailboxKey(testAccountId, sourceId): primarySource,
+        MailboxKey(delegatedAccountId, sourceId): delegatedSource,
+        MailboxKey(delegatedAccountId, destinationId): delegatedDestination,
+      });
+      when(
+        moveMultipleEmailToMailboxInteractor.execute(any, any, any, any),
+      ).thenAnswer((_) => const Stream.empty());
+
+      mailboxDashboardController.moveMultipleEmailInThreadDetail(
+        [
+          EmailInThreadDetailInfo(
+            emailId: EmailId(Id('thread-email')),
+            keywords: const {},
+            mailboxIds: {sourceId: true},
+            isValidToDisplay: true,
+          ),
+        ],
+        destinationMailboxId: destinationId,
+        emailActionType: EmailActionType.moveToMailbox,
+      );
+
+      final captured = verify(
+        moveMultipleEmailToMailboxInteractor.execute(
+          captureAny,
+          captureAny,
+          captureAny,
+          captureAny,
+        ),
+      ).captured;
+      final request = captured[2] as MoveToMailboxRequest;
+      expect(captured[1], delegatedAccountId);
+      expect(request.currentMailboxes.keys, [sourceId]);
+      expect(request.destinationMailboxId, destinationId);
+    });
+
+    test(
+        'Thread Detail move rejects a delegated source missing from the account map',
+        () {
+      final delegatedAccountId = AccountId(Id('delegated-thread'));
+      final sourceId = MailboxId(Id('thread-source'));
+      final destinationId = MailboxId(Id('thread-destination'));
+      final delegatedMailbox = PresentationMailbox(
+        MailboxId(Id('delegated-selected')),
+        accountId: delegatedAccountId,
+        isSharedAccount: true,
+      );
+
+      mailboxDashboardController.accountId.value = testAccountId;
+      mailboxDashboardController.sessionCurrent = testSession;
+      mailboxDashboardController.selectedMailbox.value = delegatedMailbox;
+      mailboxDashboardController.setMapMailboxByKey({});
+      clearInteractions(moveMultipleEmailToMailboxInteractor);
+
+      mailboxDashboardController.moveMultipleEmailInThreadDetail(
+        [
+          EmailInThreadDetailInfo(
+            emailId: EmailId(Id('thread-email')),
+            keywords: const {},
+            mailboxIds: {sourceId: true},
+            isValidToDisplay: true,
+          ),
+        ],
+        destinationMailboxId: destinationId,
+        emailActionType: EmailActionType.moveToMailbox,
+      );
+
+      verifyNever(
+        moveMultipleEmailToMailboxInteractor.execute(any, any, any, any),
+      );
+    });
+
+    test(
+        'Thread Detail move rejects an incomplete multi-email source map',
+        () {
+      final delegatedAccountId = AccountId(Id('delegated-thread'));
+      final sourceId = MailboxId(Id('thread-source'));
+      final delegatedSource = PresentationMailbox(
+        sourceId,
+        accountId: delegatedAccountId,
+        isSharedAccount: true,
+      );
+
+      mailboxDashboardController.accountId.value = testAccountId;
+      mailboxDashboardController.sessionCurrent = testSession;
+      mailboxDashboardController.selectedMailbox.value = delegatedSource;
+      mailboxDashboardController.setMapMailboxByKey({
+        MailboxKey(delegatedAccountId, sourceId): delegatedSource,
+      });
+      clearInteractions(moveMultipleEmailToMailboxInteractor);
+
+      mailboxDashboardController.moveMultipleEmailInThreadDetail(
+        [
+          EmailInThreadDetailInfo(
+            emailId: EmailId(Id('valid-thread-email')),
+            keywords: const {},
+            mailboxIds: {sourceId: true},
+            isValidToDisplay: true,
+          ),
+          EmailInThreadDetailInfo(
+            emailId: EmailId(Id('missing-thread-email')),
+            keywords: const {},
+            mailboxIds: const {},
+            isValidToDisplay: true,
+          ),
+        ],
+        destinationMailboxId: MailboxId(Id('thread-destination')),
+        emailActionType: EmailActionType.moveToTrash,
+      );
+
+      verifyNever(
+        moveMultipleEmailToMailboxInteractor.execute(any, any, any, any),
+      );
+    });
+
+    test(
+        'mailbox containment rejects virtual and synthetic mailbox sources',
+        () {
+      final delegatedAccountId = AccountId(Id('delegated-source'));
+      final virtualEmail = PresentationEmail(
+        id: EmailId(Id('virtual-email')),
+        mailboxIds: {PresentationMailbox.favoriteFolder.id: true},
+      );
+      final syntheticMailbox = PresentationMailbox.unifiedMailbox;
+      final syntheticEmail = PresentationEmail(
+        id: EmailId(Id('synthetic-email')),
+        mailboxIds: {syntheticMailbox.id: true},
+      );
+
+      mailboxDashboardController.accountId.value = testAccountId;
+      mailboxDashboardController.setMapMailboxByKey({
+        MailboxKey(delegatedAccountId, PresentationMailbox.favoriteFolder.id):
+            PresentationMailbox.favoriteFolder,
+        MailboxKey(delegatedAccountId, syntheticMailbox.id): syntheticMailbox,
+      });
+
+      expect(
+        mailboxDashboardController.mailboxContainOf(
+          virtualEmail,
+          ownerAccountId: delegatedAccountId,
+        ),
+        isNull,
+      );
+      expect(
+        mailboxDashboardController.mailboxContainOf(
+          syntheticEmail,
+          ownerAccountId: delegatedAccountId,
+        ),
+        isNull,
+      );
     });
 
     test('should returns junk mailbox ID if spam ID does not exist', () {

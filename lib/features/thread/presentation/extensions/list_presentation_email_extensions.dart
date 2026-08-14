@@ -59,6 +59,8 @@ extension ListPresentationEmailExtensions on List<PresentationEmail> {
         AppRoutes.dashboard,
         router: NavigationRouter(
           emailId: currentEmail.id,
+          emailAccountId: currentEmail.mailboxContain?.accountId ??
+              selectedMailbox?.accountId,
           mailboxId: isSearchEmailRunning
               ? null
               : selectedMailbox?.browserRouteMailboxId,

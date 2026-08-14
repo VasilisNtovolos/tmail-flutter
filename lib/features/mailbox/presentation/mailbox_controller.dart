@@ -1277,6 +1277,7 @@ class MailboxController extends BaseMailboxController
           _openEmailSearchedFromLocationBar(
             _navigationRouter!.emailId!,
             searchQuery: _navigationRouter!.searchQuery,
+            accountId: _navigationRouter!.emailAccountId,
           );
         } else if (_navigationRouter!.searchQuery?.value.isNotEmpty == true) {
           _searchEmailFromLocationBar(_navigationRouter!.searchQuery!);
@@ -1326,7 +1327,10 @@ class MailboxController extends BaseMailboxController
             popAndPush(AppRoutes.unknownRoutePage);
           }
         } else if (_navigationRouter!.emailId != null) {
-          _openEmailWithoutMailboxFromLocationBar(_navigationRouter!.emailId!);
+          _openEmailWithoutMailboxFromLocationBar(
+            _navigationRouter!.emailId!,
+            accountId: _navigationRouter!.emailAccountId,
+          );
         } else {
           _clearNavigationRouter();
           _selectSelectedMailboxDefault();
@@ -1377,9 +1381,15 @@ class MailboxController extends BaseMailboxController
     _clearNavigationRouter();
   }
 
-  void _openEmailWithoutMailboxFromLocationBar(EmailId emailId) {
+  void _openEmailWithoutMailboxFromLocationBar(
+    EmailId emailId, {
+    AccountId? accountId,
+  }) {
     mailboxDashBoardController.dispatchAction(
-      OpenEmailWithoutMailboxFromLocationBar(emailId),
+      OpenEmailWithoutMailboxFromLocationBar(
+        emailId,
+        accountId: accountId,
+      ),
     );
     _clearNavigationRouter();
   }
@@ -1388,11 +1398,13 @@ class MailboxController extends BaseMailboxController
     EmailId emailId,
     {
       SearchQuery? searchQuery,
+      AccountId? accountId,
     }
   ) {
     mailboxDashBoardController.dispatchAction(
       OpenEmailSearchedFromLocationBar(
         emailId,
+        accountId: accountId,
         searchQuery: searchQuery),
     );
     _clearNavigationRouter();

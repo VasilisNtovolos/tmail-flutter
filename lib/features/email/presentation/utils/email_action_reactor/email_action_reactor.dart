@@ -222,9 +222,8 @@ class EmailActionReactor with LabelSubMenuMixin {
     required Map<MailboxId, PresentationMailbox> mapMailbox,
     required PresentationMailbox? selectedMailbox,
     required bool isSearchEmailRunning,
-    required Map<Role, MailboxId> mapDefaultMailboxIdByRole,
+    required MailboxId? spamMailboxId,
   }) {
-    final spamMailboxId = _spamMailboxId(mapDefaultMailboxIdByRole);
     final currentMailbox = _getMailboxContain(
       presentationEmail,
       mapMailbox: mapMailbox,
@@ -251,33 +250,28 @@ class EmailActionReactor with LabelSubMenuMixin {
     required Map<MailboxId, PresentationMailbox> mapMailbox,
     required PresentationMailbox? selectedMailbox,
     required bool isSearchEmailRunning,
-    required Map<Role, MailboxId> mapDefaultMailboxIdByRole,
+    required MailboxId? spamMailboxId,
+    required MailboxId? inboxMailboxId,
   }) {
-    final spamMailboxId = _spamMailboxId(mapDefaultMailboxIdByRole);
-    final inboxMailboxId = mapDefaultMailboxIdByRole[
-      PresentationMailbox.roleInbox
-    ];
     if (spamMailboxId == null || inboxMailboxId == null) return null;
+
+    final currentMailbox = _getMailboxContain(
+      presentationEmail,
+      mapMailbox: mapMailbox,
+      selectedMailbox: selectedMailbox,
+      isSearchEmailRunning: isSearchEmailRunning,
+    );
+    if (currentMailbox == null) return null;
 
     return (
       moveRequest: MoveToMailboxRequest(
-        {spamMailboxId: [presentationEmail.id!]},
+        {currentMailbox.id: [presentationEmail.id!]},
         inboxMailboxId,
         MoveAction.moving,
         EmailActionType.unSpam
       ),
       emailIdsWithReadStatus: {presentationEmail.id!: presentationEmail.hasRead},
     );
-  }
-
-  MailboxId? _spamMailboxId(
-    Map<Role, MailboxId> mapDefaultMailboxIdByRole
-  ) {
-    return mapDefaultMailboxIdByRole[
-      PresentationMailbox.roleSpam
-    ] ?? mapDefaultMailboxIdByRole[
-      PresentationMailbox.roleJunk
-    ];
   }
 
   Stream<Either<Failure, Success>> quickCreateRule(

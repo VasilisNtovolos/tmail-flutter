@@ -26,9 +26,11 @@ import 'package:tmail_ui_user/features/email/presentation/model/composer_argumen
 import 'package:tmail_ui_user/features/email/presentation/utils/email_utils.dart';
 import 'package:tmail_ui_user/features/home/data/exceptions/session_exceptions.dart';
 import 'package:tmail_ui_user/features/mailbox/domain/state/mark_as_mailbox_read_state.dart';
+import 'package:tmail_ui_user/features/mailbox/domain/exceptions/mailbox_exception.dart';
 import 'package:tmail_ui_user/features/mailbox/presentation/extensions/presentation_mailbox_extension.dart';
 import 'package:tmail_ui_user/features/mailbox_dashboard/presentation/action/dashboard_action.dart';
 import 'package:tmail_ui_user/features/mailbox_dashboard/presentation/controller/search_controller.dart' as search;
+import 'package:tmail_ui_user/features/mailbox_dashboard/presentation/extensions/get_mailbox_contain_extension.dart';
 import 'package:tmail_ui_user/features/mailbox_dashboard/presentation/extensions/move_emails_to_mailbox_extension.dart';
 import 'package:tmail_ui_user/features/mailbox_dashboard/presentation/extensions/open_and_close_composer_extension.dart';
 import 'package:tmail_ui_user/features/mailbox_dashboard/presentation/extensions/update_current_emails_flags_extension.dart';
@@ -205,13 +207,17 @@ class ThreadController extends BaseController with EmailActionController {
       if (isSearchActive) {
         _openEmailSearchedFromLocationBar(
           email: success.email,
-          searchQuery: searchQuery
+          searchQuery: searchQuery,
+          operationAccountId: success.accountId,
         );
       } else {
         if (success.mailboxContain != null) {
           _openEmailInsideMailboxFromLocationBar(success.email, success.mailboxContain!);
         } else {
-          _openEmailWithoutMailboxFromLocationBar(success.email);
+          _openEmailWithoutMailboxFromLocationBar(
+            success.email,
+            operationAccountId: success.accountId,
+          );
         }
       }
     }
@@ -348,12 +354,16 @@ class ThreadController extends BaseController with EmailActionController {
         );
         mailboxDashBoardController.clearDashBoardAction();
       } else if (action is OpenEmailWithoutMailboxFromLocationBar) {
-        _getEmailByIdFromLocationBar(action.emailId);
+        _getEmailByIdFromLocationBar(
+          action.emailId,
+          operationAccountId: action.accountId,
+        );
         mailboxDashBoardController.clearDashBoardAction();
       } else if (action is OpenEmailSearchedFromLocationBar) {
         _handleOpenEmailSearchedFromLocationBar(
           emailId: action.emailId,
-          searchQuery: action.searchQuery
+          searchQuery: action.searchQuery,
+          operationAccountId: action.accountId,
         );
       } else if (action is SearchEmailFromLocationBar) {
         _handleSearchEmailFromLocationBar(action.searchQuery);
@@ -1490,7 +1500,10 @@ class ThreadController extends BaseController with EmailActionController {
         } else if (mailboxContain?.isTemplates == true) {
           editAsNewEmail(selectedEmail, savedEmailTemplateId: selectedEmail.id);
         } else {
-          previewEmail(selectedEmail);
+          previewEmail(
+            selectedEmail,
+            mailboxContain: mailboxContain,
+          );
         }
         break;
       case EmailActionType.selection:
@@ -1570,6 +1583,8 @@ class ThreadController extends BaseController with EmailActionController {
         AppRoutes.dashboard,
         router: NavigationRouter(
           emailId: currentEmail.id,
+          emailAccountId: currentEmail.mailboxContain?.accountId ??
+              mailboxDashBoardController.accountId.value,
           mailboxId: isSearchActive
             ? currentEmail.mailboxContain?.mailboxId
             : selectedMailboxId,
@@ -1592,14 +1607,32 @@ class ThreadController extends BaseController with EmailActionController {
     EmailId emailId,
     {
       PresentationMailbox? mailboxContain,
+      AccountId? operationAccountId,
     }
   ) {
-    if (_session != null && _accountId != null) {
+    final requestAccountId = operationAccountId ??
+        (mailboxDashBoardController.dashboardRoute.value ==
+                DashboardRoutes.searchEmail
+            ? mailboxDashBoardController.accountId.value
+            : _accountId);
+    if (operationAccountId != null &&
+        !mailboxDashBoardController.isEmailOperationAccountUsable(
+          operationAccountId,
+        )) {
+      consumeState(Stream.value(Left(GetEmailByIdFailure(
+        NotFoundAccountIdException(),
+      ))));
+      return;
+    }
+    if (_session != null && requestAccountId != null) {
       consumeState(_getEmailByIdInteractor.execute(
         _session!,
-        _accountId!,
+        requestAccountId,
         emailId,
-        properties: EmailUtils.getPropertiesForEmailGetMethod(_session!, _accountId!),
+        properties: EmailUtils.getPropertiesForEmailGetMethod(
+          _session!,
+          requestAccountId,
+        ),
         mailboxContain: mailboxContain,
       ));
     } else {
@@ -1615,8 +1648,9 @@ class ThreadController extends BaseController with EmailActionController {
     final presentationEmailWithRouter = email.withRouteWeb(RouteUtils.createUrlWebLocationBar(
       AppRoutes.dashboard,
       router: NavigationRouter(
-        emailId: email.id,
-        mailboxId: mailboxContain.browserRouteMailboxId,
+          emailId: email.id,
+          emailAccountId: mailboxContain.accountId,
+          mailboxId: mailboxContain.browserRouteMailboxId,
         // Keep the delegated account in the rewritten URL so a later reload or
         // Open in new tab reopens the email in the owning account, not a same-id
         // primary folder.
@@ -1634,14 +1668,30 @@ class ThreadController extends BaseController with EmailActionController {
     );
   }
 
-  void _openEmailWithoutMailboxFromLocationBar(PresentationEmail email) {
-    final mailboxContain = email.findMailboxContain(mailboxDashBoardController.mapMailboxById);
+  void _openEmailWithoutMailboxFromLocationBar(
+    PresentationEmail email, {
+    AccountId? operationAccountId,
+  }) {
+    final mailboxContain = operationAccountId == null
+        ? email.findMailboxContain(mailboxDashBoardController.mapMailboxById)
+        : mailboxDashBoardController.resolveMailboxContainForOperation(
+            email,
+            operationAccountId: operationAccountId,
+            cachedMailbox: email.mailboxContain,
+          );
+    if (operationAccountId != null && mailboxContain == null) {
+      consumeState(Stream.value(Left(GetEmailByIdFailure(
+        NotFoundMailboxOfEmailException(),
+      ))));
+      return;
+    }
     if (mailboxContain != null) {
       mailboxDashBoardController.setSelectedMailbox(mailboxContain);
       final presentationEmailWithRouter = email.withRouteWeb(RouteUtils.createUrlWebLocationBar(
         AppRoutes.dashboard,
         router: NavigationRouter(
           emailId: email.id,
+          emailAccountId: operationAccountId ?? mailboxContain.accountId,
           mailboxId: mailboxContain.mailboxId,
           dashboardType: DashboardType.normal
         )
@@ -1659,6 +1709,7 @@ class ThreadController extends BaseController with EmailActionController {
         AppRoutes.dashboard,
         router: NavigationRouter(
           emailId: email.id,
+          emailAccountId: _accountId,
           dashboardType: DashboardType.search
         )
       ));
@@ -1673,11 +1724,13 @@ class ThreadController extends BaseController with EmailActionController {
   void _openEmailSearchedFromLocationBar({
     required PresentationEmail email,
     SearchQuery? searchQuery,
+    AccountId? operationAccountId,
   }) {
     final presentationEmailWithRouter = email.withRouteWeb(RouteUtils.createUrlWebLocationBar(
       AppRoutes.dashboard,
       router: NavigationRouter(
         emailId: email.id,
+        emailAccountId: operationAccountId ?? _accountId,
         searchQuery: searchQuery,
         dashboardType: DashboardType.search
       )
@@ -1685,7 +1738,13 @@ class ThreadController extends BaseController with EmailActionController {
     handleEmailActionType(
       EmailActionType.preview,
       presentationEmailWithRouter,
-      email.findMailboxContain(mailboxDashBoardController.mapMailboxById),
+      operationAccountId == null
+          ? email.findMailboxContain(mailboxDashBoardController.mapMailboxById)
+          : mailboxDashBoardController.resolveMailboxContainForOperation(
+              email,
+              operationAccountId: operationAccountId,
+              cachedMailbox: email.mailboxContain,
+            ),
     );
   }
 
@@ -1733,6 +1792,7 @@ class ThreadController extends BaseController with EmailActionController {
   void _handleOpenEmailSearchedFromLocationBar({
     required EmailId emailId,
     SearchQuery? searchQuery,
+    AccountId? operationAccountId,
   }) {
     searchController.enableSearch();
     if (searchQuery != null) {
@@ -1747,7 +1807,10 @@ class ThreadController extends BaseController with EmailActionController {
       searchController.searchFocus.unfocus();
     }
     _searchEmail();
-    _getEmailByIdFromLocationBar(emailId);
+    _getEmailByIdFromLocationBar(
+      emailId,
+      operationAccountId: operationAccountId,
+    );
     mailboxDashBoardController.clearDashBoardAction();
   }
 

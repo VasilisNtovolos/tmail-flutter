@@ -1,6 +1,7 @@
 
 import 'package:jmap_dart_client/jmap/mail/email/email.dart';
 import 'package:jmap_dart_client/jmap/mail/email/email_address.dart';
+import 'package:jmap_dart_client/jmap/account_id.dart';
 import 'package:model/email/email_action_type.dart';
 import 'package:model/email/presentation_email.dart';
 import 'package:model/mailbox/presentation_mailbox.dart';
@@ -74,27 +75,30 @@ class OpenEmailInsideMailboxFromLocationBar extends DashBoardAction {
 class OpenEmailWithoutMailboxFromLocationBar extends DashBoardAction {
 
   final EmailId emailId;
+  final AccountId? accountId;
 
-  OpenEmailWithoutMailboxFromLocationBar(this.emailId);
+  OpenEmailWithoutMailboxFromLocationBar(this.emailId, {this.accountId});
 
   @override
-  List<Object?> get props => [emailId];
+  List<Object?> get props => [emailId, accountId];
 }
 
 class OpenEmailSearchedFromLocationBar extends DashBoardAction {
 
   final EmailId emailId;
+  final AccountId? accountId;
   final SearchQuery? searchQuery;
 
   OpenEmailSearchedFromLocationBar(
     this.emailId,
     {
+      this.accountId,
       this.searchQuery,
     }
   );
 
   @override
-  List<Object?> get props => [emailId, searchQuery];
+  List<Object?> get props => [emailId, accountId, searchQuery];
 }
 
 class SearchEmailFromLocationBar extends DashBoardAction {

@@ -15,6 +15,8 @@ enum DashboardType {
 
 class NavigationRouter with EquatableMixin {
   final EmailId? emailId;
+  /// The account that owns [emailId].
+  final AccountId? emailAccountId;
   final MailboxId? mailboxId;
   /// The account that owns [mailboxId], omitted for the primary account so
   /// existing primary-account URLs stay byte-identical.
@@ -32,6 +34,7 @@ class NavigationRouter with EquatableMixin {
 
   NavigationRouter({
     this.emailId,
+    this.emailAccountId,
     this.mailboxId,
     this.mailboxAccountId,
     this.searchQuery,
@@ -54,6 +57,7 @@ class NavigationRouter with EquatableMixin {
   @override
   List<Object?> get props => [
     emailId,
+    emailAccountId,
     mailboxId,
     mailboxAccountId,
     searchQuery,

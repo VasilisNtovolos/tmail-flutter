@@ -986,7 +986,10 @@ class SearchEmailController extends BaseController
             draftMailboxId: mailboxContain!.id,
           );
         } else {
-          previewEmail(selectedEmail);
+          previewEmail(
+            selectedEmail,
+            mailboxContain: mailboxContain,
+          );
         }
         break;
       case EmailActionType.selection:
@@ -1022,6 +1025,9 @@ class SearchEmailController extends BaseController
         break;
       case EmailActionType.unSpam:
         unSpam(selectedEmail);
+        break;
+      case EmailActionType.archiveMessage:
+        moveEmailsToArchive([selectedEmail]);
         break;
       case EmailActionType.editAsNewEmail:
         editAsNewEmail(selectedEmail);
@@ -1112,6 +1118,10 @@ class SearchEmailController extends BaseController
       case EmailActionType.unSpam:
         cancelSelectionMode();
         unSpamSelectedMultipleEmail(listEmails);
+        break;
+      case EmailActionType.archiveMessage:
+        cancelSelectionMode();
+        moveEmailsToArchive(listEmails);
         break;
       case EmailActionType.labelAs:
         Get.find<AddListLabelToListEmailsDelegate>().openChooseLabelModal(

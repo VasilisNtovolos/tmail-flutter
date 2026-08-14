@@ -41,6 +41,7 @@ import 'package:tmail_ui_user/features/email/presentation/widgets/information_se
 import 'package:tmail_ui_user/features/email/presentation/widgets/mail_unsubscribed_banner.dart';
 import 'package:tmail_ui_user/features/email/presentation/widgets/view_entire_message_with_message_clipped_widget.dart';
 import 'package:tmail_ui_user/features/mailbox_dashboard/presentation/extensions/handle_ai_needs_action_extension.dart';
+import 'package:tmail_ui_user/features/mailbox_dashboard/presentation/extensions/get_mailbox_contain_extension.dart';
 import 'package:tmail_ui_user/features/mailbox_dashboard/presentation/extensions/handle_open_context_menu_extension.dart';
 import 'package:tmail_ui_user/features/mailbox_dashboard/presentation/extensions/labels/handle_logic_label_extension.dart';
 import 'package:tmail_ui_user/features/mailbox_dashboard/presentation/extensions/verify_display_overlay_view_on_iframe_extension.dart';
@@ -246,7 +247,15 @@ class EmailView extends GetWidget<SingleEmailController> {
   }
 
   PresentationMailbox? _getMailboxContain(PresentationEmail currentEmail) {
-    return currentEmail.findMailboxContain(controller.mailboxDashBoardController.mapMailboxById);
+    final operationAccountId =
+        controller.mailboxDashBoardController.emailActionDispatchAccountId;
+    if (operationAccountId == null) return null;
+    return controller.mailboxDashBoardController
+        .resolveMailboxContainForOperation(
+      currentEmail,
+      operationAccountId: operationAccountId,
+      cachedMailbox: currentEmail.mailboxContain,
+    );
   }
 
   Widget _buildEmailMessage({
@@ -347,9 +356,7 @@ class EmailView extends GetWidget<SingleEmailController> {
                 ),
           ),
           onToggleThreadDetailCollapseExpand: onToggleThreadDetailCollapseExpand,
-          mailboxContain: presentationEmail.findMailboxContain(
-            controller.mailboxDashBoardController.mapMailboxById,
-          ),
+          mailboxContain: _getMailboxContain(presentationEmail),
         )),
         Obx(() => MailUnsubscribedBanner(
           presentationEmail: controller.currentEmail,

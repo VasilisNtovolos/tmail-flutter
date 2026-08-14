@@ -17,10 +17,13 @@ import 'package:jmap_dart_client/jmap/core/state.dart';
 import 'package:jmap_dart_client/jmap/core/user_name.dart';
 import 'package:jmap_dart_client/jmap/mail/calendar/calendar_event.dart';
 import 'package:jmap_dart_client/jmap/mail/email/email.dart';
+import 'package:jmap_dart_client/jmap/mail/mailbox/mailbox.dart';
 import 'package:mockito/annotations.dart';
 import 'package:mockito/mockito.dart';
 import 'package:model/email/presentation_email.dart';
 import 'package:model/email/read_actions.dart';
+import 'package:model/mailbox/mailbox_key.dart';
+import 'package:model/mailbox/presentation_mailbox.dart';
 import 'package:tmail_ui_user/features/caching/caching_manager.dart';
 import 'package:tmail_ui_user/features/download/presentation/controllers/download_controller.dart';
 import 'package:tmail_ui_user/features/email/data/datasource/calendar_event_datasource.dart';
@@ -30,6 +33,7 @@ import 'package:tmail_ui_user/features/email/data/repository/calendar_event_repo
 import 'package:tmail_ui_user/features/email/domain/model/event_action.dart';
 import 'package:tmail_ui_user/features/email/domain/model/email_mutation_context.dart';
 import 'package:tmail_ui_user/features/email/domain/model/mark_read_action.dart';
+import 'package:tmail_ui_user/features/email/domain/model/move_to_mailbox_request.dart';
 import 'package:tmail_ui_user/features/email/domain/state/mark_as_email_read_state.dart';
 import 'package:tmail_ui_user/features/email/domain/state/get_email_content_state.dart';
 import 'package:tmail_ui_user/features/email/domain/state/parse_calendar_event_state.dart';
@@ -50,6 +54,9 @@ import 'package:tmail_ui_user/features/login/domain/usecases/delete_authority_oi
 import 'package:tmail_ui_user/features/login/domain/usecases/delete_credential_interactor.dart';
 import 'package:tmail_ui_user/features/mailbox_dashboard/presentation/action/download_ui_action.dart';
 import 'package:tmail_ui_user/features/mailbox_dashboard/presentation/controller/mailbox_dashboard_controller.dart';
+import 'package:tmail_ui_user/features/mailbox_dashboard/presentation/controller/search_controller.dart'
+    as dashboard_search;
+import 'package:tmail_ui_user/features/mailbox_dashboard/presentation/model/dashboard_routes.dart';
 import 'package:tmail_ui_user/features/manage_account/data/local/language_cache_manager.dart';
 import 'package:tmail_ui_user/features/manage_account/domain/usecases/get_all_identities_interactor.dart';
 import 'package:tmail_ui_user/features/manage_account/domain/usecases/log_out_oidc_interactor.dart';
@@ -66,6 +73,12 @@ import 'package:uuid/uuid.dart';
 import '../../../../fixtures/account_fixtures.dart';
 import '../../../../fixtures/session_fixtures.dart';
 import 'single_email_controller_test.mocks.dart';
+
+class _MockSearchController extends Mock
+    implements dashboard_search.SearchController {
+  @override
+  bool get isSearchEmailRunning => false;
+}
 
 mockControllerCallback() => InternalFinalCallback<void>(callback: () {});
 const fallbackGenerators = {
@@ -595,6 +608,206 @@ void main() {
       await tester.pump();
 
       verifyNever(appToast.showToastErrorMessage(any, any));
+    },
+  );
+
+  testWidgets(
+    'delegated Single Email role actions use concrete account-scoped source',
+    (tester) async {
+      final delegatedAccountId = AccountId(Id('single-delegated'));
+      final sourceMailbox = PresentationMailbox(
+        MailboxId(Id('single-source')),
+        accountId: delegatedAccountId,
+        isSharedAccount: true,
+      );
+      final staleMailbox = PresentationMailbox(
+        MailboxId(Id('single-stale')),
+        accountId: delegatedAccountId,
+        isSharedAccount: true,
+      );
+      final trashMailbox = PresentationMailbox(
+        MailboxId(Id('single-trash')),
+        accountId: delegatedAccountId,
+        role: PresentationMailbox.roleTrash,
+        isSharedAccount: true,
+      );
+      final spamMailbox = PresentationMailbox(
+        MailboxId(Id('single-spam')),
+        accountId: delegatedAccountId,
+        role: PresentationMailbox.roleSpam,
+        isSharedAccount: true,
+      );
+      final inboxMailbox = PresentationMailbox(
+        MailboxId(Id('single-inbox')),
+        accountId: delegatedAccountId,
+        role: PresentationMailbox.roleInbox,
+        isSharedAccount: true,
+      );
+      final email = PresentationEmail(
+        id: EmailId(Id('single-delegated-email')),
+        mailboxIds: {sourceMailbox.id: true},
+        mailboxContain: sourceMailbox,
+      );
+      final spamEmail = email.copyWith(
+        mailboxIds: {spamMailbox.id: true},
+        mailboxContain: spamMailbox,
+      );
+      final searchController = _MockSearchController();
+
+      when(mailboxDashboardController.selectedEmail).thenReturn(Rxn(email));
+      when(mailboxDashboardController.emailUIAction).thenReturn(Rxn(null));
+      when(mailboxDashboardController.viewState).thenReturn(Rx(Right(UIState.idle)));
+      when(mailboxDashboardController.sessionCurrent).thenReturn(testSession);
+      when(mailboxDashboardController.accountId).thenReturn(Rxn(testAccountId));
+      when(mailboxDashboardController.emailActionAccountId)
+          .thenReturn(delegatedAccountId);
+      when(mailboxDashboardController.emailActionDispatchAccountId)
+          .thenReturn(delegatedAccountId);
+      when(mailboxDashboardController.dashboardRoute)
+          .thenReturn(Rx(DashboardRoutes.thread));
+      when(mailboxDashboardController.searchController)
+          .thenReturn(searchController);
+      when(mailboxDashboardController.selectedMailbox)
+          .thenReturn(Rxn(staleMailbox));
+      when(mailboxDashboardController.mapMailboxById).thenReturn({});
+      when(mailboxDashboardController.mapMailboxByKey).thenReturn({
+        MailboxKey(delegatedAccountId, sourceMailbox.id): sourceMailbox,
+        MailboxKey(delegatedAccountId, staleMailbox.id): staleMailbox,
+        MailboxKey(delegatedAccountId, trashMailbox.id): trashMailbox,
+        MailboxKey(delegatedAccountId, spamMailbox.id): spamMailbox,
+        MailboxKey(delegatedAccountId, inboxMailbox.id): inboxMailbox,
+      });
+      when(mailboxDashboardController.roleMailboxIdInAccount(any, any))
+          .thenAnswer((invocation) {
+        final roles = invocation.positionalArguments[1] as List;
+        if (roles.contains(PresentationMailbox.roleTrash)) return trashMailbox.id;
+        if (roles.contains(PresentationMailbox.roleInbox)) return inboxMailbox.id;
+        return spamMailbox.id;
+      });
+      when(mailboxDashboardController.mailboxContainOf(
+        email,
+        ownerAccountId: delegatedAccountId,
+      )).thenReturn(sourceMailbox);
+      when(mailboxDashboardController.mailboxContainOf(
+        spamEmail,
+        ownerAccountId: delegatedAccountId,
+      )).thenReturn(spamMailbox);
+      when(mailboxDashboardController.downloadController)
+          .thenReturn(downloadController);
+      when(downloadController.downloadUIAction)
+          .thenAnswer((_) => Rxn(DownloadUIAction.idle));
+
+      await tester.pumpWidget(makeTestableWidget(child: const SizedBox.shrink()));
+      await tester.pump();
+      when(mailboxDashboardController.selectedEmail).thenReturn(Rxn(null));
+      singleEmailController.onInit();
+      mailboxDashboardController.accountId.refresh();
+
+      singleEmailController.moveToTrash(email);
+      var captured = verify(
+        mailboxDashboardController.moveToMailbox(
+          captureAny,
+          captureAny,
+          captureAny,
+          captureAny,
+        ),
+      ).captured;
+      var request = captured[2] as MoveToMailboxRequest;
+      expect(captured[1], delegatedAccountId);
+      expect(request.currentMailboxes.keys, contains(sourceMailbox.id));
+      expect(request.destinationMailboxId, trashMailbox.id);
+
+      clearInteractions(mailboxDashboardController);
+      singleEmailController.moveToSpam(email);
+      captured = verify(
+        mailboxDashboardController.moveToMailbox(
+          captureAny,
+          captureAny,
+          captureAny,
+          captureAny,
+        ),
+      ).captured;
+      request = captured[2] as MoveToMailboxRequest;
+      expect(captured[1], delegatedAccountId);
+      expect(request.currentMailboxes.keys, contains(sourceMailbox.id));
+      expect(request.destinationMailboxId, spamMailbox.id);
+
+      clearInteractions(mailboxDashboardController);
+      singleEmailController.unSpam(spamEmail);
+      captured = verify(
+        mailboxDashboardController.moveToMailbox(
+          captureAny,
+          captureAny,
+          captureAny,
+          captureAny,
+        ),
+      ).captured;
+      request = captured[2] as MoveToMailboxRequest;
+      expect(captured[1], delegatedAccountId);
+      expect(request.currentMailboxes.keys, contains(spamMailbox.id));
+      expect(request.destinationMailboxId, inboxMailbox.id);
+    },
+  );
+
+  testWidgets(
+    'Single Email role actions do not dispatch without a concrete source',
+    (tester) async {
+      final delegatedAccountId = AccountId(Id('single-delegated'));
+      final delegatedMailbox = PresentationMailbox(
+        MailboxId(Id('single-selected')),
+        accountId: delegatedAccountId,
+        isSharedAccount: true,
+      );
+      final email = PresentationEmail(
+        id: EmailId(Id('single-unresolvable-email')),
+        mailboxIds: {MailboxId(Id('missing-source')): true},
+      );
+      final searchController = _MockSearchController();
+
+      when(mailboxDashboardController.selectedEmail).thenReturn(Rxn(null));
+      when(mailboxDashboardController.emailUIAction).thenReturn(Rxn(null));
+      when(mailboxDashboardController.viewState).thenReturn(Rx(Right(UIState.idle)));
+      when(mailboxDashboardController.sessionCurrent).thenReturn(testSession);
+      when(mailboxDashboardController.accountId).thenReturn(Rxn(testAccountId));
+      when(mailboxDashboardController.emailActionAccountId)
+          .thenReturn(delegatedAccountId);
+      when(mailboxDashboardController.emailActionDispatchAccountId)
+          .thenReturn(delegatedAccountId);
+      when(mailboxDashboardController.searchController)
+          .thenReturn(searchController);
+      when(mailboxDashboardController.selectedMailbox)
+          .thenReturn(Rxn(delegatedMailbox));
+      when(mailboxDashboardController.mapMailboxById).thenReturn({});
+      when(mailboxDashboardController.mapMailboxByKey).thenReturn({});
+      when(mailboxDashboardController.mailboxContainOf(
+        email,
+        ownerAccountId: delegatedAccountId,
+      )).thenReturn(null);
+      when(mailboxDashboardController.roleMailboxIdInAccount(any, any))
+          .thenReturn(MailboxId(Id('delegated-role')));
+      when(mailboxDashboardController.downloadController)
+          .thenReturn(downloadController);
+      when(downloadController.downloadUIAction)
+          .thenAnswer((_) => Rxn(DownloadUIAction.idle));
+
+      await tester.pumpWidget(makeTestableWidget(child: const SizedBox.shrink()));
+      await tester.pump();
+      singleEmailController.onInit();
+      mailboxDashboardController.accountId.refresh();
+
+      singleEmailController.moveToMailbox(email);
+      singleEmailController.moveToSpam(email);
+      singleEmailController.unSpam(email);
+
+      verifyNever(
+        mailboxDashboardController.moveToMailbox(
+          any,
+          any,
+          any,
+          any,
+        ),
+      );
+      verify(mailboxDashboardController.emitMoveEmailFailure(any)).called(3);
     },
   );
 }

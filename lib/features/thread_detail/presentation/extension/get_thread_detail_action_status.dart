@@ -3,6 +3,7 @@ import 'package:jmap_dart_client/jmap/mail/mailbox/mailbox.dart';
 import 'package:model/extensions/presentation_mailbox_extension.dart';
 import 'package:model/mailbox/presentation_mailbox.dart';
 import 'package:tmail_ui_user/features/thread_detail/presentation/thread_detail_controller.dart';
+import 'package:tmail_ui_user/features/mailbox_dashboard/presentation/extensions/get_mailbox_contain_extension.dart';
 
 extension GetThreadDetailActionStatus on ThreadDetailController {
   bool get threadDetailIsStarred {
@@ -23,7 +24,16 @@ extension GetThreadDetailActionStatus on ThreadDetailController {
   }
 
   MailboxId? getMailboxIdByRole(Role role) {
-    return mailboxDashBoardController.mapDefaultMailboxIdByRole[role];
+    final ownerAccountId = accountId;
+    if (ownerAccountId == null) return null;
+
+    return mailboxDashBoardController.roleMailboxIdInAccount(
+          ownerAccountId,
+          [role],
+        ) ??
+        (ownerAccountId == mailboxDashBoardController.accountId.value
+            ? mailboxDashBoardController.getMailboxIdByRole(role)
+            : null);
   }
 
   bool get threadDetailIsArchived {
@@ -34,11 +44,16 @@ extension GetThreadDetailActionStatus on ThreadDetailController {
   }
 
   bool get threadDetailIsTeamMailbox {
+    final ownerAccountId = accountId;
     return emailsInThreadDetailInfo.any((email) {
       return email.mailboxIds?.keys.any(
             (mailboxId) =>
-                mailboxDashBoardController
-                    .mapMailboxById[mailboxId]?.isChildOfTeamMailboxes ==
+                (ownerAccountId == null
+                    ? mailboxDashBoardController.mapMailboxById[mailboxId]
+                    : mailboxDashBoardController.getMailboxByIdInAccount(
+                        ownerAccountId,
+                        mailboxId,
+                      ))?.isChildOfTeamMailboxes ==
                 true,
           ) ==
           true;

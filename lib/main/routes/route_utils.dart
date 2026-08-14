@@ -69,7 +69,10 @@ abstract class RouteUtils {
           StringQueryParameter(paramContext, router.mailboxId!.id.value),
         // Emitted only for a delegated account, so primary-account URLs are
         // unchanged.
-        if (router.labelId == null && router.mailboxAccountId != null)
+        if (router.emailId != null && router.emailAccountId != null)
+          StringQueryParameter(
+            paramAccountContext, router.emailAccountId!.id.value)
+        else if (router.labelId == null && router.mailboxAccountId != null)
           StringQueryParameter(
             paramAccountContext, router.mailboxAccountId!.id.value),
         if (router.searchQuery != null)
@@ -164,6 +167,9 @@ abstract class RouteUtils {
     log('RouteUtils::parsingRouteParametersToNavigationRouter:listEmailAddress = $listEmailAddress');
     return NavigationRouter(
       emailId: emailId,
+      emailAccountId: emailId != null && accountContextParam != null
+          ? AccountId(Id(accountContextParam))
+          : null,
       mailboxId: mailboxId,
       mailboxAccountId: mailboxAccountId,
       labelId: labelId,

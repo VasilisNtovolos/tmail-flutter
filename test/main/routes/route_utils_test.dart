@@ -1,5 +1,9 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:jmap_dart_client/jmap/account_id.dart';
+import 'package:jmap_dart_client/jmap/core/id.dart';
+import 'package:jmap_dart_client/jmap/mail/email/email.dart';
 import 'package:tmail_ui_user/main/routes/app_routes.dart';
+import 'package:tmail_ui_user/main/routes/navigation_router.dart';
 import 'package:tmail_ui_user/main/routes/route_utils.dart';
 
 void main() {
@@ -282,5 +286,27 @@ void main() {
     test('should handle multi-level tld like co.uk (not fully accurate)', () {
       expect(RouteUtils.getRootDomain(hostname: 'service.example.co.uk'), 'co.uk');
     });
+  });
+
+  test('email navigation preserves its explicit owning account', () {
+    final accountId = AccountId(Id('delegated-route-account'));
+    final emailId = EmailId(Id('same-route-email'));
+    final parsed = RouteUtils.parsingRouteParametersToNavigationRouter(
+      {
+        RouteUtils.paramID: emailId.id.value,
+        RouteUtils.paramAccountContext: accountId.id.value,
+        RouteUtils.paramType: DashboardType.normal.name,
+      },
+    );
+
+    expect(
+      NavigationRouter(
+        emailId: emailId,
+        emailAccountId: accountId,
+        dashboardType: DashboardType.normal,
+      ).emailAccountId,
+      accountId,
+    );
+    expect(parsed.emailAccountId, accountId);
   });
 }
