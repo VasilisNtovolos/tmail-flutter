@@ -19,7 +19,8 @@ mixin MailboxWidgetMixin {
   List<MailboxActions> _listActionForDefaultMailbox(
     PresentationMailbox mailbox,
     bool spamReportEnabled,
-    bool deletedMessageVaultSupported
+    bool deletedMessageVaultSupported,
+    bool emptySpamEligible,
   ) {
     if (mailbox.isVirtualFolder) {
       return [
@@ -46,7 +47,8 @@ mixin MailboxWidgetMixin {
           MailboxActions.moveFolderContent,
           _mailboxActionForSpam(spamReportEnabled),
           MailboxActions.confirmMailSpam,
-          MailboxActions.emptySpam
+          if (emptySpamEligible)
+            MailboxActions.emptySpam
         ]
       else if (mailbox.countUnReadEmailsAsString.isNotEmpty)
         ...[
@@ -83,7 +85,10 @@ mixin MailboxWidgetMixin {
     ];
   }
 
-  List<MailboxActions> _listActionForTeamMailbox(PresentationMailbox mailbox) {
+  List<MailboxActions> _listActionForTeamMailbox(
+    PresentationMailbox mailbox,
+    bool emptySpamEligible,
+  ) {
     return [
       if (PlatformInfo.isWeb && mailbox.isSubscribedMailbox)
         MailboxActions.openInNewTab,
@@ -101,6 +106,8 @@ mixin MailboxWidgetMixin {
           MailboxActions.enableMailbox,
       if (mailbox.isTrash && mailbox.myRights?.mayRemoveItems == true)
         MailboxActions.emptyTrash,
+      if (mailbox.isSpam && emptySpamEligible)
+        MailboxActions.emptySpam,
       if (mailbox.myRights?.mayDelete == true)
         MailboxActions.delete,
     ];
@@ -111,6 +118,7 @@ mixin MailboxWidgetMixin {
     bool spamReportEnabled,
     bool deletedMessageVaultSupported,
     bool isSubAddressingSupported,
+    bool emptySpamEligible,
   ) {
     // Every mailbox in another user's account is myRights-gated like a team
     // mailbox, regardless of whether it carries a role (a shared Inbox would
@@ -118,7 +126,7 @@ mixin MailboxWidgetMixin {
     // createFilter are absent here: cross-account move is unsupported and
     // filters are a primary-account concept.
     if (mailbox.isSharedAccount) {
-      return _listActionForTeamMailbox(mailbox);
+      return _listActionForTeamMailbox(mailbox, emptySpamEligible);
     }
 
     if (mailbox.isDefault) {
@@ -126,11 +134,12 @@ mixin MailboxWidgetMixin {
         mailbox,
         spamReportEnabled,
         deletedMessageVaultSupported,
+        emptySpamEligible,
       );
     } else if (mailbox.isPersonal) {
       return _listActionForPersonalMailbox(mailbox, isSubAddressingSupported);
     } else {
-      return _listActionForTeamMailbox(mailbox);
+      return _listActionForTeamMailbox(mailbox, emptySpamEligible);
     }
   }
 
@@ -141,12 +150,14 @@ mixin MailboxWidgetMixin {
     bool isSubAddressingSupported,
     ImagePaths imagePaths,
     AppLocalizations appLocalizations,
+    bool emptySpamEligible,
   ) {
     final mailboxActionsSupported = _listActionForAllMailboxType(
       mailbox,
       spamReportEnabled,
       deletedMessageVaultSupported,
       isSubAddressingSupported,
+      emptySpamEligible,
     );
 
     final listContextMenuItemAction = mailboxActionsSupported
@@ -167,12 +178,14 @@ mixin MailboxWidgetMixin {
     bool spamReportEnabled,
     bool deletedMessageVaultSupported,
     bool isSubAddressingSupported,
+    bool emptySpamEligible,
   ) {
     final mailboxActionsSupported = _listActionForAllMailboxType(
       presentationMailbox,
       spamReportEnabled,
       deletedMessageVaultSupported,
       isSubAddressingSupported,
+      emptySpamEligible,
     );
 
     final popupMenuActions = mailboxActionsSupported

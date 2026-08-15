@@ -27,6 +27,7 @@ import 'package:tmail_ui_user/features/thread/domain/constants/thread_constants.
 import 'package:tmail_ui_user/features/thread/domain/model/email_filter.dart';
 import 'package:tmail_ui_user/features/thread/domain/model/email_response.dart';
 import 'package:tmail_ui_user/features/thread/domain/model/filter_message_option.dart';
+import 'package:tmail_ui_user/features/thread/domain/model/empty_spam_folder_result.dart';
 import 'package:tmail_ui_user/features/thread/domain/model/get_email_request.dart';
 import 'package:tmail_ui_user/features/thread/domain/model/search_email.dart';
 import 'package:tmail_ui_user/features/thread/domain/repository/thread_repository.dart';
@@ -585,27 +586,36 @@ class ThreadRepositoryImpl extends ThreadRepository {
   }
 
   @override
-  Future<List<EmailId>> emptySpamFolder(
-    Session session, 
-    AccountId accountId, 
+  Future<EmptySpamFolderResult> emptySpamFolderWithResult(
+    Session session,
+    AccountId accountId,
     MailboxId spamMailboxId,
     int totalEmails,
-    StreamController<dartz.Either<Failure, Success>> onProgressController
+    StreamController<dartz.Either<Failure, Success>> onProgressController,
   ) async {
-    final listEmailIdDeleted = await mapDataSource[DataSourceType.network]!.emptyMailboxFolder(
+    final result =
+        await mapDataSource[DataSourceType.network]!.emptySpamFolder(
       session,
       accountId,
       spamMailboxId,
       totalEmails,
-      onProgressController
+      onProgressController,
     );
+    if (result.successfulEmailIds.isNotEmpty) {
+      try {
+        await _updateEmailCache(
+          accountId,
+          session.username,
+          newDestroyed: result.successfulEmailIds);
+      } catch (error) {
+        return result.withFailure(
+          EmptySpamFolderFailureOrigin.localCache,
+          error,
+        );
+      }
+    }
 
-    await _updateEmailCache(
-      accountId,
-      session.username,
-      newDestroyed: listEmailIdDeleted);
-
-    return listEmailIdDeleted;
+    return result;
   }
 
   @override

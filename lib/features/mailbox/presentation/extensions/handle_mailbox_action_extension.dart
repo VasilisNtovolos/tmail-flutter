@@ -32,6 +32,7 @@ extension HandleMailboxActionExtension on MailboxController {
       isSubAddressingSupported,
       imagePaths,
       AppLocalizations.of(context),
+      mailboxDashBoardController.isEmptySpamEligible(mailbox),
     );
 
     if (contextMenuActions.isEmpty) {
@@ -88,6 +89,7 @@ extension HandleMailboxActionExtension on MailboxController {
       mailboxDashBoardController.enableSpamReport,
       deletedMessageVaultSupported,
       isSubAddressingSupported,
+      mailboxDashBoardController.isEmptySpamEligible(mailbox),
     );
 
     if (popupMenuActions.isEmpty) return Future.value();

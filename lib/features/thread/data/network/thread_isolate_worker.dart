@@ -24,6 +24,7 @@ import 'package:tmail_ui_user/features/email/data/network/email_api.dart';
 import 'package:tmail_ui_user/features/thread/data/model/empty_mailbox_folder_arguments.dart';
 import 'package:tmail_ui_user/features/thread/data/network/thread_api.dart';
 import 'package:tmail_ui_user/features/thread/domain/exceptions/thread_exceptions.dart';
+import 'package:tmail_ui_user/features/thread/domain/model/empty_spam_folder_result.dart';
 import 'package:tmail_ui_user/features/thread/domain/state/empty_spam_folder_state.dart';
 import 'package:tmail_ui_user/main/exceptions/isolate_exception.dart';
 import 'package:worker_manager/worker_manager.dart';
@@ -72,6 +73,160 @@ class ThreadIsolateWorker {
       } else {
         return result;
       }
+    }
+  }
+
+  Future<EmptySpamFolderResult> emptySpamFolder(
+    Session session,
+    AccountId accountId,
+    MailboxId mailboxId,
+    int totalEmails,
+    StreamController<dartz.Either<Failure, Success>> onProgressController,
+  ) async {
+    if (PlatformInfo.isWeb || Platform.numberOfProcessors == 1) {
+      return _emptySpamFolderOnMainIsolate(
+        session,
+        accountId,
+        mailboxId,
+        totalEmails,
+        onProgressController,
+      );
+    }
+
+    final rootIsolateToken = RootIsolateToken.instance;
+    if (rootIsolateToken == null) {
+      throw const CanNotGetRootIsolateToken();
+    }
+    final args = EmptyMailboxFolderArguments(
+      session,
+      _threadAPI,
+      _emailAPI,
+      accountId,
+      mailboxId,
+      rootIsolateToken,
+    );
+    return workerManager.executeWithPort<EmptySpamFolderResult, int>(
+      _buildEmptySpamFolderClosure(args),
+      onMessage: (processedCount) {
+        if (!onProgressController.isClosed) {
+          onProgressController.add(Right<Failure, Success>(
+            EmptyingFolderState(
+              mailboxId,
+              processedCount,
+              totalEmails,
+            ),
+          ));
+        }
+      },
+    );
+  }
+
+  static Future<EmptySpamFolderResult> Function(SendPort)
+      _buildEmptySpamFolderClosure(
+    EmptyMailboxFolderArguments args,
+  ) => (sendPort) => _emptySpamFolderAction(args, sendPort);
+
+  static Future<EmptySpamFolderResult> _emptySpamFolderAction(
+    EmptyMailboxFolderArguments args,
+    SendPort sendPort,
+  ) async {
+    var result = EmptySpamFolderResult.empty();
+    var failureStage = 'background-initialization';
+    try {
+      BackgroundIsolateBinaryMessenger.ensureInitialized(args.isolateToken);
+
+      var hasEmails = true;
+      Email? lastEmail;
+
+      while (hasEmails) {
+        failureStage = 'email-query';
+        final emailsResponse = await args.threadAPI.getAllEmail(
+          args.session,
+          args.accountId,
+          sort: <Comparator>{}..add(
+            EmailComparator(EmailComparatorProperty.receivedAt)
+              ..setIsAscending(false),
+          ),
+          filter: EmailFilterCondition(
+            inMailbox: args.mailboxId,
+            before: lastEmail?.receivedAt,
+          ),
+          properties: Properties({
+            EmailProperty.id,
+            EmailProperty.receivedAt,
+          }),
+        );
+        var emails = emailsResponse.emailList ?? <Email>[];
+        if (lastEmail != null) {
+          emails = emails.where((email) => email.id != lastEmail!.id).toList();
+        }
+        if (emails.isEmpty) {
+          hasEmails = false;
+          continue;
+        }
+
+        lastEmail = emails.last;
+        final requestedIds = emails.listEmailIds;
+        failureStage = 'permanent-deletion';
+        final deletion = await args.emailAPI.deleteMultipleEmailsPermanently(
+          args.session,
+          args.accountId,
+          requestedIds,
+        );
+        result = result.mergeBatch(
+          requestedEmailIds: requestedIds,
+          destroyedEmailIds: deletion.emailIdsSuccess,
+          errors: deletion.mapErrors,
+        );
+        sendPort.send(result.successfulEmailIds.length);
+      }
+    } catch (error, stackTrace) {
+      return result.withFailure(
+        EmptySpamFolderFailureOrigin.remote,
+        _workerFailureDescriptor(
+          error,
+          stackTrace,
+          stage: failureStage,
+          afterConfirmedIds: result.successfulEmailIds.isNotEmpty,
+        ),
+      );
+    }
+
+    return result;
+  }
+
+  static EmptySpamFolderWorkerFailureDescriptor _workerFailureDescriptor(
+    Object error,
+    StackTrace stackTrace, {
+    required String stage,
+    required bool afterConfirmedIds,
+  }) =>
+      EmptySpamFolderWorkerFailureDescriptor(
+        category: 'remote',
+        stage: stage,
+        exceptionType: _safeWorkerText(
+          () => error.runtimeType.toString(),
+          fallback: 'unknown-error-type',
+        ),
+        message: _safeWorkerText(
+          error.toString,
+          fallback: 'worker failure message unavailable',
+        ),
+        stackText: _safeWorkerText(
+          stackTrace.toString,
+          fallback: 'worker failure stack unavailable',
+        ),
+        afterConfirmedIds: afterConfirmedIds,
+      );
+
+  static String _safeWorkerText(
+    String Function() loader, {
+    required String fallback,
+  }) {
+    try {
+      return loader();
+    } catch (_) {
+      return fallback;
     }
   }
 
@@ -180,5 +335,75 @@ class ThreadIsolateWorker {
     }
     log('ThreadIsolateWorker::_emptyMailboxFolderOnMainIsolate(): TOTAL_REMOVE: ${emailListCompleted.length}');
     return emailListCompleted;
+  }
+
+  Future<EmptySpamFolderResult> _emptySpamFolderOnMainIsolate(
+    Session session,
+    AccountId accountId,
+    MailboxId mailboxId,
+    int totalEmails,
+    StreamController<dartz.Either<Failure, Success>> onProgressController,
+  ) async {
+    var result = EmptySpamFolderResult.empty();
+    try {
+      var hasEmails = true;
+      Email? lastEmail;
+
+      while (hasEmails) {
+        final emailsResponse = await _threadAPI.getAllEmail(
+          session,
+          accountId,
+          sort: <Comparator>{}..add(
+            EmailComparator(EmailComparatorProperty.receivedAt)
+              ..setIsAscending(false),
+          ),
+          filter: EmailFilterCondition(
+            inMailbox: mailboxId,
+            before: lastEmail?.receivedAt,
+          ),
+          properties: Properties({
+            EmailProperty.id,
+            EmailProperty.receivedAt,
+          }),
+        );
+        var emails = emailsResponse.emailList ?? <Email>[];
+        if (lastEmail != null) {
+          emails = emails.where((email) => email.id != lastEmail!.id).toList();
+        }
+        if (emails.isEmpty) {
+          hasEmails = false;
+          continue;
+        }
+
+        lastEmail = emails.last;
+        final requestedIds = emails.listEmailIds;
+        final deletion = await _emailAPI.deleteMultipleEmailsPermanently(
+          session,
+          accountId,
+          requestedIds,
+        );
+        result = result.mergeBatch(
+          requestedEmailIds: requestedIds,
+          destroyedEmailIds: deletion.emailIdsSuccess,
+          errors: deletion.mapErrors,
+        );
+        if (!onProgressController.isClosed) {
+          onProgressController.add(Right<Failure, Success>(
+            EmptyingFolderState(
+              mailboxId,
+              result.successfulEmailIds.length,
+              totalEmails,
+            ),
+          ));
+        }
+      }
+    } catch (error) {
+      return result.withFailure(
+        EmptySpamFolderFailureOrigin.remote,
+        error,
+      );
+    }
+
+    return result;
   }
 }

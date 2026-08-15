@@ -702,6 +702,27 @@ class MailboxController extends BaseMailboxController
           affectedMailboxId: reactionState.mailboxId,
           totalEmailsChanged: -reactionState.emailIds.length,
         );
+      } else if (reactionState is EmptySpamFolderSuccess &&
+          reactionState.context != null) {
+        if (!mailboxDashBoardController
+            .isCurrentEmptySpamContext(reactionState.context!)) {
+          return;
+        }
+        _handleDeleteEmailsFromMailbox(
+          affectedMailboxId: reactionState.mailboxId,
+          operationAccountId: reactionState.context!.mailboxKey.accountId,
+          totalEmailsChanged: -reactionState.emailIds.length,
+        );
+      } else if (reactionState is EmptySpamFolderPartialSuccess) {
+        if (!mailboxDashBoardController
+            .isCurrentEmptySpamContext(reactionState.context)) {
+          return;
+        }
+        _handleDeleteEmailsFromMailbox(
+          affectedMailboxId: reactionState.mailboxId,
+          operationAccountId: reactionState.context.mailboxKey.accountId,
+          totalEmailsChanged: -reactionState.emailIds.length,
+        );
       } else if (reactionState is EmptySpamFolderSuccess) {
         _handleDeleteEmailsFromMailbox(
           affectedMailboxId: reactionState.mailboxId,
@@ -2200,9 +2221,8 @@ class MailboxController extends BaseMailboxController
         trashMailbox: presentationMailbox,
       );
     } else if (presentationMailbox.isSpam) {
-      mailboxDashBoardController.emptySpamFolderAction(
-        spamFolderId: presentationMailbox.id,
-        totalEmails: presentationMailbox.countTotalEmails,
+      mailboxDashBoardController.emptySpamMailboxAction(
+        spamMailbox: presentationMailbox,
       );
     }
   }

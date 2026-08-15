@@ -1,8 +1,14 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:core/data/network/config/dynamic_url_interceptors.dart';
 import 'package:core/presentation/resources/image_paths.dart';
+import 'package:core/presentation/state/failure.dart';
+import 'package:core/presentation/state/success.dart';
 import 'package:core/presentation/utils/app_toast.dart';
+import 'package:core/utils/logging/app_logger_registry.dart';
+import 'package:core/utils/logging/log_handler.dart';
+import 'package:core/utils/logging/log_record.dart';
 import 'package:core/presentation/utils/responsive_utils.dart';
 import 'package:dartz/dartz.dart' hide State;
 import 'package:flutter/widgets.dart' hide State;
@@ -11,10 +17,12 @@ import 'package:get/get.dart';
 import 'package:jmap_dart_client/jmap/account_id.dart';
 import 'package:jmap_dart_client/jmap/core/account/account.dart';
 import 'package:jmap_dart_client/jmap/core/capability/capability_identifier.dart';
+import 'package:jmap_dart_client/jmap/core/error/set_error.dart';
 import 'package:jmap_dart_client/jmap/core/id.dart';
 import 'package:jmap_dart_client/jmap/core/utc_date.dart';
 import 'package:jmap_dart_client/jmap/core/session/session.dart';
 import 'package:jmap_dart_client/jmap/core/state.dart';
+import 'package:jmap_dart_client/jmap/core/unsigned_int.dart';
 import 'package:jmap_dart_client/jmap/core/user_name.dart';
 import 'package:jmap_dart_client/jmap/mail/email/email_address.dart';
 import 'package:jmap_dart_client/jmap/mail/email/email.dart';
@@ -25,6 +33,7 @@ import 'package:jmap_dart_client/jmap/mail/mailbox/mailbox_rights.dart';
 import 'package:model/email/mark_star_action.dart';
 import 'package:model/email/presentation_email.dart';
 import 'package:model/email/read_actions.dart';
+import 'package:model/extensions/presentation_mailbox_extension.dart';
 import 'package:model/mailbox/mailbox_key.dart';
 import 'package:model/mailbox/presentation_mailbox.dart';
 import 'package:core/utils/platform_info.dart';
@@ -77,6 +86,9 @@ import 'package:tmail_ui_user/features/mailbox/domain/usecases/subaddressing_int
 import 'package:tmail_ui_user/features/mailbox/domain/usecases/subscribe_mailbox_interactor.dart';
 import 'package:tmail_ui_user/features/mailbox/domain/usecases/subscribe_multiple_mailbox_interactor.dart';
 import 'package:tmail_ui_user/features/mailbox/presentation/mailbox_controller.dart';
+import 'package:tmail_ui_user/features/mailbox/presentation/model/mailbox_collection.dart';
+import 'package:tmail_ui_user/features/mailbox/presentation/model/mailbox_node.dart';
+import 'package:tmail_ui_user/features/mailbox/presentation/model/mailbox_tree.dart';
 import 'package:tmail_ui_user/features/mailbox/presentation/model/mailbox_tree_builder.dart';
 import 'package:tmail_ui_user/features/mailbox_creator/domain/usecases/verify_name_interactor.dart';
 import 'package:tmail_ui_user/features/mailbox_dashboard/domain/usecases/get_all_recent_search_latest_interactor.dart';
@@ -111,11 +123,13 @@ import 'package:tmail_ui_user/features/sending_queue/domain/usecases/get_all_sen
 import 'package:tmail_ui_user/features/sending_queue/domain/usecases/store_sending_email_interactor.dart';
 import 'package:tmail_ui_user/features/sending_queue/domain/usecases/update_sending_email_interactor.dart';
 import 'package:tmail_ui_user/features/thread/domain/constants/thread_constants.dart';
+import 'package:tmail_ui_user/features/thread/domain/model/empty_spam_folder_result.dart';
 import 'package:tmail_ui_user/features/thread/domain/state/get_email_by_id_state.dart';
 import 'package:tmail_ui_user/features/thread/domain/model/filter_message_option.dart';
 import 'package:tmail_ui_user/features/thread/domain/model/search_query.dart';
 import 'package:tmail_ui_user/features/thread/domain/usecases/clean_and_get_emails_in_mailbox_interactor.dart';
 import 'package:tmail_ui_user/features/thread/domain/usecases/empty_spam_folder_interactor.dart';
+import 'package:tmail_ui_user/features/thread/domain/state/empty_spam_folder_state.dart';
 import 'package:tmail_ui_user/features/thread/domain/usecases/get_email_by_id_interactor.dart';
 import 'package:tmail_ui_user/features/thread/domain/usecases/get_emails_in_mailbox_interactor.dart';
 import 'package:tmail_ui_user/features/thread/domain/usecases/load_more_emails_in_mailbox_interactor.dart';
@@ -145,6 +159,105 @@ const fallbackGenerators = {
   #onStart: mockControllerCallback,
   #onDelete: mockControllerCallback,
 };
+
+class _CancelErrorStream<T> extends Stream<T> {
+  final Stream<T> source;
+  final Object cancelError;
+  final void Function() onCancel;
+
+  _CancelErrorStream(this.source, this.cancelError, this.onCancel);
+
+  @override
+  StreamSubscription<T> listen(
+    void Function(T event)? onData, {
+    Function? onError,
+    void Function()? onDone,
+    bool? cancelOnError,
+  }) =>
+      _CancelErrorSubscription<T>(
+        source.listen(
+          onData,
+          onError: onError,
+          onDone: onDone,
+          cancelOnError: cancelOnError,
+        ),
+        cancelError,
+        onCancel,
+      );
+}
+
+class _CancelErrorSubscription<T> implements StreamSubscription<T> {
+  final StreamSubscription<T> delegate;
+  final Object cancelError;
+  final void Function() onCancel;
+
+  _CancelErrorSubscription(this.delegate, this.cancelError, this.onCancel);
+
+  @override
+  Future<void> cancel() async {
+    onCancel();
+    await delegate.cancel();
+    throw cancelError;
+  }
+
+  @override
+  void onData(void Function(T data)? handleData) => delegate.onData(handleData);
+
+  @override
+  void onError(Function? handleError) => delegate.onError(handleError);
+
+  @override
+  void onDone(void Function()? handleDone) => delegate.onDone(handleDone);
+
+  @override
+  void pause([Future<void>? resumeSignal]) => delegate.pause(resumeSignal);
+
+  @override
+  void resume() => delegate.resume();
+
+  @override
+  bool get isPaused => delegate.isPaused;
+
+  @override
+  Future<E> asFuture<E>([E? futureValue]) => delegate.asFuture(futureValue);
+}
+class _ThrowingToStringError extends Error {
+  final String label;
+  _ThrowingToStringError(this.label);
+
+  @override
+  String toString() => throw StateError('$label toString failed');
+}
+
+class _NoopLogHandler extends LogHandler {
+  const _NoopLogHandler();
+
+  @override
+  void handle(LogRecord record) {}
+}
+
+void _enableTestErrorLogging() {
+  AppLoggerRegistry.instance.registerHandler(const _NoopLogHandler());
+  addTearDown(AppLoggerRegistry.instance.resetForTesting);
+}
+
+Future<List<Object>> _captureZonedErrors(
+  Future<void> Function() action,
+) async {
+  final errors = <Object>[];
+  final completed = Completer<void>();
+  runZonedGuarded(() async {
+    try {
+      await action();
+    } catch (error) {
+      errors.add(error);
+    } finally {
+      if (!completed.isCompleted) completed.complete();
+    }
+  }, (error, _) => errors.add(error));
+  await completed.future.timeout(const Duration(seconds: 2));
+  return errors;
+}
 
 @GenerateNiceMocks([
   // write mock specs for unavailable dependencies
@@ -1400,6 +1513,1565 @@ void main() {
   });
 
   group('spamMailboxId:test', () {
+    test(
+        'Empty Spam dispatches the selected delegated mailbox account when '
+        'primary and delegated mailbox ids collide', () {
+      final delegatedAccountId = AccountId(Id('delegated-empty-spam'));
+      final sharedSpamId = MailboxId(Id('same-spam-id'));
+      final primarySpam = PresentationMailbox(
+        sharedSpamId,
+        accountId: testAccountId,
+        role: PresentationMailbox.roleSpam,
+      );
+      final delegatedSpam = PresentationMailbox(
+        sharedSpamId,
+        accountId: delegatedAccountId,
+        role: PresentationMailbox.roleSpam,
+        isSharedAccount: true,
+        myRights:
+            MailboxRights(true, true, true, true, true, true, true, true, true),
+      );
+      mailboxDashboardController.sessionCurrent =
+          navigationSession(delegatedAccountId);
+      mailboxDashboardController.accountId.value = testAccountId;
+      mailboxDashboardController.selectedMailbox.value = delegatedSpam;
+      mailboxDashboardController.setMapMailboxById({sharedSpamId: primarySpam});
+      mailboxDashboardController.setMapMailboxByKey({
+        MailboxKey(testAccountId, sharedSpamId): primarySpam,
+        MailboxKey(delegatedAccountId, sharedSpamId): delegatedSpam,
+      });
+      when(emptySpamFolderInteractor.executeWithContext(
+        any as dynamic,
+        any as dynamic,
+      ))
+          .thenAnswer((_) => const Stream.empty());
+      clearInteractions(emptySpamFolderInteractor);
+
+      mailboxDashboardController.emptySpamFolderAction(
+        spamFolderId: delegatedSpam.id,
+        totalEmails: 3,
+      );
+
+      final captured = verify(
+        emptySpamFolderInteractor.executeWithContext(
+          captureAny as dynamic,
+          captureAny as dynamic,
+        ),
+      ).captured;
+      final operationContext = captured[0];
+      expect(identical(operationContext.session,
+          mailboxDashboardController.sessionCurrent),
+          isTrue);
+      expect(operationContext.mailboxKey.accountId, delegatedAccountId);
+      expect(operationContext.mailboxKey.mailboxId, sharedSpamId);
+    });
+
+    test('Empty Spam keeps the primary mailbox control account-scoped', () {
+      final delegatedAccountId = AccountId(Id('delegated-empty-spam-control'));
+      final primarySpam = PresentationMailbox(
+        MailboxId(Id('primary-spam')),
+        accountId: testAccountId,
+        role: PresentationMailbox.roleSpam,
+      );
+      mailboxDashboardController.sessionCurrent =
+          navigationSession(delegatedAccountId);
+      mailboxDashboardController.accountId.value = testAccountId;
+      mailboxDashboardController.selectedMailbox.value = primarySpam;
+      mailboxDashboardController.setMapMailboxById({primarySpam.id: primarySpam});
+      mailboxDashboardController.setMapMailboxByKey({
+        MailboxKey(testAccountId, primarySpam.id): primarySpam,
+      });
+      when(emptySpamFolderInteractor.executeWithContext(
+        any as dynamic,
+        any as dynamic,
+      ))
+          .thenAnswer((_) => const Stream.empty());
+      clearInteractions(emptySpamFolderInteractor);
+
+      mailboxDashboardController.emptySpamFolderAction(
+        spamFolderId: primarySpam.id,
+        totalEmails: 2,
+      );
+
+      final captured = verify(
+        emptySpamFolderInteractor.executeWithContext(
+          captureAny as dynamic,
+          any as dynamic,
+        ),
+      ).captured;
+      expect(captured.single.mailboxKey.accountId, testAccountId);
+      expect(captured.single.mailboxKey.mailboxId, primarySpam.id);
+    });
+
+    test(
+        'Empty Spam rejects delegated mailbox without mayRemoveItems before '
+        'interactor dispatch and reports failure', () {
+      final delegatedAccountId = AccountId(Id('delegated-empty-spam-denied'));
+      final delegatedSpam = PresentationMailbox(
+        MailboxId(Id('delegated-spam-denied')),
+        accountId: delegatedAccountId,
+        role: PresentationMailbox.roleSpam,
+        isSharedAccount: true,
+        myRights:
+            MailboxRights(true, true, false, true, true, true, true, true, true),
+      );
+      mailboxDashboardController.sessionCurrent =
+          navigationSession(delegatedAccountId);
+      mailboxDashboardController.accountId.value = testAccountId;
+      mailboxDashboardController.selectedMailbox.value = delegatedSpam;
+      mailboxDashboardController.setMapMailboxByKey({
+        MailboxKey(delegatedAccountId, delegatedSpam.id): delegatedSpam,
+      });
+      when(emptySpamFolderInteractor.executeWithContext(
+        any as dynamic,
+        any as dynamic,
+      ))
+          .thenAnswer((_) => const Stream.empty());
+      clearInteractions(emptySpamFolderInteractor);
+      clearInteractions(mockToastManager);
+
+      mailboxDashboardController.emptySpamFolderAction(
+        spamFolderId: delegatedSpam.id,
+        totalEmails: 2,
+      );
+
+      verifyNever(emptySpamFolderInteractor.executeWithContext(
+        any as dynamic,
+        any as dynamic,
+      ));
+      verify(mockToastManager.showMessageFailure(any)).called(1);
+    });
+
+    test('Empty Spam rejects an owning account without JMAP Mail', () {
+      final delegatedAccountId = AccountId(Id('delegated-empty-spam-no-mail'));
+      final delegatedSpam = PresentationMailbox(
+        MailboxId(Id('delegated-spam-no-mail')),
+        accountId: delegatedAccountId,
+        role: PresentationMailbox.roleSpam,
+        isSharedAccount: true,
+        myRights:
+            MailboxRights(true, true, true, true, true, true, true, true, true),
+      );
+      mailboxDashboardController.sessionCurrent = navigationSession(
+        delegatedAccountId,
+        delegatedHasMailCapability: false,
+      );
+      mailboxDashboardController.accountId.value = testAccountId;
+      mailboxDashboardController.selectedMailbox.value = delegatedSpam;
+      mailboxDashboardController.setMapMailboxByKey({
+        MailboxKey(delegatedAccountId, delegatedSpam.id): delegatedSpam,
+      });
+      clearInteractions(emptySpamFolderInteractor);
+      clearInteractions(mockToastManager);
+
+      mailboxDashboardController.emptySpamMailboxAction(
+        spamMailbox: delegatedSpam,
+      );
+
+      verifyNever(emptySpamFolderInteractor.executeWithContext(
+        any as dynamic,
+        any as dynamic,
+      ));
+      verify(mockToastManager.showMessageFailure(any)).called(1);
+    });
+
+    test('Empty Spam double-click for the same MailboxKey dispatches once',
+        () async {
+      final delegatedAccountId = AccountId(Id('delegated-empty-spam-held'));
+      final delegatedSpam = PresentationMailbox(
+        MailboxId(Id('delegated-spam-held')),
+        accountId: delegatedAccountId,
+        role: PresentationMailbox.roleSpam,
+        isSharedAccount: true,
+        myRights:
+            MailboxRights(true, true, true, true, true, true, true, true, true),
+      );
+      final held =
+          StreamController<Either<Failure, Success>>.broadcast(sync: true);
+      addTearDown(held.close);
+      mailboxDashboardController.sessionCurrent =
+          navigationSession(delegatedAccountId);
+      mailboxDashboardController.accountId.value = testAccountId;
+      mailboxDashboardController.selectedMailbox.value = delegatedSpam;
+      mailboxDashboardController.setMapMailboxByKey({
+        MailboxKey(delegatedAccountId, delegatedSpam.id): delegatedSpam,
+      });
+      when(emptySpamFolderInteractor.executeWithContext(
+        any as dynamic,
+        any as dynamic,
+      )).thenAnswer((_) => held.stream);
+      clearInteractions(emptySpamFolderInteractor);
+
+      mailboxDashboardController.emptySpamMailboxAction(
+        spamMailbox: delegatedSpam,
+      );
+      mailboxDashboardController.emptySpamMailboxAction(
+        spamMailbox: delegatedSpam,
+      );
+
+      verify(emptySpamFolderInteractor.executeWithContext(
+        any as dynamic,
+        any as dynamic,
+      )).called(1);
+    });
+
+    test('Empty Spam different MailboxKeys remain independently executable',
+        () async {
+      final firstSpam = PresentationMailbox(
+        MailboxId(Id('first-independent-spam')),
+        accountId: testAccountId,
+        role: PresentationMailbox.roleSpam,
+      );
+      final secondSpam = PresentationMailbox(
+        MailboxId(Id('second-independent-spam')),
+        accountId: testAccountId,
+        role: PresentationMailbox.roleSpam,
+      );
+      final held =
+          StreamController<Either<Failure, Success>>.broadcast(sync: true);
+      addTearDown(held.close);
+      mailboxDashboardController.sessionCurrent =
+          navigationSession(AccountId(Id('unused-independent')));
+      mailboxDashboardController.setMapMailboxByKey({
+        firstSpam.key: firstSpam,
+        secondSpam.key: secondSpam,
+      });
+      when(emptySpamFolderInteractor.executeWithContext(
+        any as dynamic,
+        any as dynamic,
+      )).thenAnswer((_) => held.stream);
+      clearInteractions(emptySpamFolderInteractor);
+
+      mailboxDashboardController.emptySpamMailboxAction(
+        spamMailbox: firstSpam,
+      );
+      mailboxDashboardController.emptySpamMailboxAction(
+        spamMailbox: secondSpam,
+      );
+
+      verify(emptySpamFolderInteractor.executeWithContext(
+        any as dynamic,
+        any as dynamic,
+      )).called(2);
+    });
+    test(
+        'Empty Spam synchronous loading listener failure settles and permits '
+        'same-key retry without an uncaught error', () async {
+      final spam = PresentationMailbox(
+        MailboxId(Id('loading-listener-error-spam')),
+        accountId: testAccountId,
+        role: PresentationMailbox.roleSpam,
+      );
+      final firstIdle = Completer<void>();
+      var loadingHasThrown = false;
+      final loadingSubscription = mailboxDashboardController
+          .viewStateMailboxActionProgress
+          .listen((state) {
+        state.fold((_) {}, (success) {
+          if (success is EmptySpamFolderLoading && !loadingHasThrown) {
+            loadingHasThrown = true;
+            throw StateError('loading listener failed');
+          }
+          if (loadingHasThrown &&
+              success == UIState.idle &&
+              !firstIdle.isCompleted) {
+            firstIdle.complete();
+          }
+        });
+      });
+      addTearDown(loadingSubscription.cancel);
+      mailboxDashboardController.sessionCurrent =
+          navigationSession(AccountId(Id('unused-loading-listener-error')));
+      mailboxDashboardController.setMapMailboxByKey({spam.key: spam});
+      when(emptySpamFolderInteractor.executeWithContext(
+        any as dynamic,
+        any as dynamic,
+      )).thenAnswer((_) => const Stream.empty());
+      clearInteractions(emptySpamFolderInteractor);
+
+      final uncaught = await _captureZonedErrors(() async {
+        mailboxDashboardController.emptySpamMailboxAction(spamMailbox: spam);
+        await firstIdle.future.timeout(const Duration(seconds: 1));
+        mailboxDashboardController.emptySpamMailboxAction(spamMailbox: spam);
+        await untilCalled(emptySpamFolderInteractor.executeWithContext(
+          any as dynamic,
+          any as dynamic,
+        ));
+      });
+
+      expect(uncaught, isEmpty);
+      expect(loadingHasThrown, isTrue);
+      verify(emptySpamFolderInteractor.executeWithContext(
+        any as dynamic,
+        any as dynamic,
+      )).called(1);
+    });
+
+    test(
+        'Empty Spam success-side presentation listener failure settles and '
+        'permits retry without an uncaught error', () async {
+      final spam = PresentationMailbox(
+        MailboxId(Id('success-listener-error-spam')),
+        accountId: testAccountId,
+        role: PresentationMailbox.roleSpam,
+      );
+      final canceled = Completer<void>();
+      final held = StreamController<Either<Failure, Success>>.broadcast(
+        sync: true,
+        onCancel: () {
+          if (!canceled.isCompleted) canceled.complete();
+        },
+      );
+      addTearDown(() async {
+        if (!held.isClosed) await held.close();
+      });
+      var successHasThrown = false;
+      final presentationSubscription =
+          mailboxDashboardController.viewState.listen((state) {
+        state.fold((_) {}, (success) {
+          if (success is EmptySpamFolderSuccess && !successHasThrown) {
+            successHasThrown = true;
+            throw StateError('success presentation listener failed');
+          }
+        });
+      });
+      addTearDown(presentationSubscription.cancel);
+      late dynamic operationContext;
+      mailboxDashboardController.sessionCurrent =
+          navigationSession(AccountId(Id('unused-success-listener-error')));
+      mailboxDashboardController.setMapMailboxByKey({spam.key: spam});
+      when(emptySpamFolderInteractor.executeWithContext(
+        any as dynamic,
+        any as dynamic,
+      )).thenAnswer((invocation) {
+        operationContext = invocation.positionalArguments.first;
+        return held.stream;
+      });
+      clearInteractions(emptySpamFolderInteractor);
+
+      final uncaught = await _captureZonedErrors(() async {
+        mailboxDashboardController.emptySpamMailboxAction(spamMailbox: spam);
+        held.add(Right(EmptySpamFolderSuccess(
+          [EmailId(Id('success-listener-confirmed'))],
+          spam.id,
+          context: operationContext,
+        )));
+        await canceled.future.timeout(const Duration(seconds: 1));
+        mailboxDashboardController.emptySpamMailboxAction(spamMailbox: spam);
+      });
+
+      expect(uncaught, isEmpty);
+      expect(successHasThrown, isTrue);
+      verify(emptySpamFolderInteractor.executeWithContext(
+        any as dynamic,
+        any as dynamic,
+      )).called(2);
+    });
+
+    test('Empty Spam failure releases the guard and permits retry', () async {
+      final delegatedAccountId = AccountId(Id('delegated-empty-spam-retry'));
+      final delegatedSpam = PresentationMailbox(
+        MailboxId(Id('delegated-spam-retry')),
+        accountId: delegatedAccountId,
+        role: PresentationMailbox.roleSpam,
+        isSharedAccount: true,
+        myRights:
+            MailboxRights(true, true, true, true, true, true, true, true, true),
+      );
+      final retainedEmail = PresentationEmail(
+        id: EmailId(Id('all-failure-retained')),
+        mailboxIds: {delegatedSpam.id: true},
+        mailboxContain: delegatedSpam,
+      );
+      mailboxDashboardController.sessionCurrent =
+          navigationSession(delegatedAccountId);
+      mailboxDashboardController.accountId.value = testAccountId;
+      mailboxDashboardController.selectedMailbox.value = delegatedSpam;
+      mailboxDashboardController.dashboardRoute.value = DashboardRoutes.thread;
+      mailboxDashboardController.emailsInCurrentMailbox.assignAll([retainedEmail]);
+      mailboxDashboardController.setMapMailboxByKey({
+        MailboxKey(delegatedAccountId, delegatedSpam.id): delegatedSpam,
+      });
+      when(emptySpamFolderInteractor.executeWithContext(
+        any as dynamic,
+        any as dynamic,
+      )).thenAnswer((invocation) {
+        final context = invocation.positionalArguments.first;
+        return Stream.value(Left(EmptySpamFolderFailure(
+          StateError('failed'),
+          context: context,
+        )));
+      });
+      clearInteractions(emptySpamFolderInteractor);
+      clearInteractions(mockToastManager);
+
+      mailboxDashboardController.emptySpamMailboxAction(
+        spamMailbox: delegatedSpam,
+      );
+      await untilCalled(mockToastManager.showMessageFailure(any));
+      expect(mailboxDashboardController.emailsInCurrentMailbox, [retainedEmail]);
+      mailboxDashboardController.emptySpamMailboxAction(
+        spamMailbox: delegatedSpam,
+      );
+
+      verify(emptySpamFolderInteractor.executeWithContext(
+        any as dynamic,
+        any as dynamic,
+      )).called(2);
+    });
+
+    test(
+        'Empty Spam source addError settles, cancels, and permits retry '
+        'without an uncaught error', () async {
+      final spam = PresentationMailbox(
+        MailboxId(Id('source-error-spam')),
+        accountId: testAccountId,
+        role: PresentationMailbox.roleSpam,
+      );
+      final canceled = Completer<void>();
+      final held = StreamController<Either<Failure, Success>>.broadcast(
+        sync: true,
+        onCancel: () {
+          if (!canceled.isCompleted) canceled.complete();
+        },
+      );
+      addTearDown(() async {
+        if (!held.isClosed) await held.close();
+      });
+      mailboxDashboardController.sessionCurrent =
+          navigationSession(AccountId(Id('unused-source-error')));
+      mailboxDashboardController.setMapMailboxByKey({spam.key: spam});
+      when(emptySpamFolderInteractor.executeWithContext(
+        any as dynamic,
+        any as dynamic,
+      )).thenAnswer((_) => held.stream);
+      clearInteractions(emptySpamFolderInteractor);
+
+      mailboxDashboardController.emptySpamMailboxAction(spamMailbox: spam);
+      held.addError(StateError('source stream failed'));
+
+      await canceled.future.timeout(const Duration(seconds: 1));
+      mailboxDashboardController.emptySpamMailboxAction(spamMailbox: spam);
+
+      verify(emptySpamFolderInteractor.executeWithContext(
+        any as dynamic,
+        any as dynamic,
+      )).called(2);
+    });
+    test(
+        'Empty Spam source error with throwing toString settles and permits '
+        'retry without an uncaught error', () async {
+      _enableTestErrorLogging();
+      final spam = PresentationMailbox(
+        MailboxId(Id('throwing-source-error-spam')),
+        accountId: testAccountId,
+        role: PresentationMailbox.roleSpam,
+      );
+      final canceled = Completer<void>();
+      final held = StreamController<Either<Failure, Success>>.broadcast(
+        sync: true,
+        onCancel: () {
+          if (!canceled.isCompleted) canceled.complete();
+        },
+      );
+      addTearDown(() async {
+        if (!held.isClosed) await held.close();
+      });
+      mailboxDashboardController.sessionCurrent =
+          navigationSession(AccountId(Id('unused-throwing-source-error')));
+      mailboxDashboardController.setMapMailboxByKey({spam.key: spam});
+      when(emptySpamFolderInteractor.executeWithContext(
+        any as dynamic,
+        any as dynamic,
+      )).thenAnswer((_) => held.stream);
+      clearInteractions(emptySpamFolderInteractor);
+
+      final uncaught = await _captureZonedErrors(() async {
+        mailboxDashboardController.emptySpamMailboxAction(spamMailbox: spam);
+        held.addError(_ThrowingToStringError('source'));
+        await canceled.future.timeout(const Duration(seconds: 1));
+        mailboxDashboardController.emptySpamMailboxAction(spamMailbox: spam);
+      });
+
+      expect(uncaught, isEmpty);
+      verify(emptySpamFolderInteractor.executeWithContext(
+        any as dynamic,
+        any as dynamic,
+      )).called(2);
+    });
+
+    test(
+        'Empty Spam partial terminal followed by source error has one '
+        'feedback and permits retry', () async {
+      final spam = PresentationMailbox(
+        MailboxId(Id('partial-then-error-spam')),
+        accountId: testAccountId,
+        role: PresentationMailbox.roleSpam,
+      );
+      final canceled = Completer<void>();
+      final held = StreamController<Either<Failure, Success>>.broadcast(
+        sync: true,
+        onCancel: () {
+          if (!canceled.isCompleted) canceled.complete();
+        },
+      );
+      addTearDown(() async {
+        if (!held.isClosed) await held.close();
+      });
+      late dynamic operationContext;
+      mailboxDashboardController.sessionCurrent =
+          navigationSession(AccountId(Id('unused-partial-error')));
+      mailboxDashboardController.setMapMailboxByKey({spam.key: spam});
+      when(emptySpamFolderInteractor.executeWithContext(
+        any as dynamic,
+        any as dynamic,
+      )).thenAnswer((invocation) {
+        operationContext = invocation.positionalArguments.first;
+        return held.stream;
+      });
+      clearInteractions(emptySpamFolderInteractor);
+      clearInteractions(mockToastManager);
+
+      mailboxDashboardController.emptySpamMailboxAction(spamMailbox: spam);
+      held.add(Right(EmptySpamFolderPartialSuccess(
+        context: operationContext,
+        emailIds: [EmailId(Id('partial-confirmed'))],
+        errors: {
+          Id('partial-failed'): SetError(SetError.forbidden),
+        },
+      )));
+      held.addError(StateError('late source error'));
+
+      await canceled.future.timeout(const Duration(seconds: 1));
+      verify(mockToastManager.showMessageFailure(any)).called(1);
+      mailboxDashboardController.emptySpamMailboxAction(spamMailbox: spam);
+      verify(emptySpamFolderInteractor.executeWithContext(
+        any as dynamic,
+        any as dynamic,
+      )).called(2);
+    });
+
+    test(
+        'Empty Spam throwing failure presentation still settles, cancels, '
+        'and permits retry', () async {
+      final spam = PresentationMailbox(
+        MailboxId(Id('throwing-presentation-spam')),
+        accountId: testAccountId,
+        role: PresentationMailbox.roleSpam,
+      );
+      final canceled = Completer<void>();
+      final held = StreamController<Either<Failure, Success>>.broadcast(
+        sync: true,
+        onCancel: () {
+          if (!canceled.isCompleted) canceled.complete();
+        },
+      );
+      addTearDown(() async {
+        if (!held.isClosed) await held.close();
+      });
+      mailboxDashboardController.sessionCurrent =
+          navigationSession(AccountId(Id('unused-throwing-presentation')));
+      mailboxDashboardController.setMapMailboxByKey({spam.key: spam});
+      when(emptySpamFolderInteractor.executeWithContext(
+        any as dynamic,
+        any as dynamic,
+      )).thenAnswer((_) => held.stream);
+      var presentationHasThrown = false;
+      when(mockToastManager.showMessageFailure(any)).thenAnswer((_) {
+        if (!presentationHasThrown) {
+          presentationHasThrown = true;
+          throw StateError('failure presentation threw');
+        }
+      });
+      clearInteractions(emptySpamFolderInteractor);
+
+      mailboxDashboardController.emptySpamMailboxAction(spamMailbox: spam);
+      held.addError(StateError('source stream failed'));
+
+      await canceled.future.timeout(const Duration(seconds: 1));
+      mailboxDashboardController.emptySpamMailboxAction(spamMailbox: spam);
+      verify(emptySpamFolderInteractor.executeWithContext(
+        any as dynamic,
+        any as dynamic,
+      )).called(2);
+    });
+
+    test(
+        'Empty Spam cancellation failure is observed and does not block retry',
+        () async {
+      final spam = PresentationMailbox(
+        MailboxId(Id('cancellation-error-spam')),
+        accountId: testAccountId,
+        role: PresentationMailbox.roleSpam,
+      );
+      final cancellationStarted = Completer<void>();
+      final held =
+          StreamController<Either<Failure, Success>>.broadcast(sync: true);
+      final source = _CancelErrorStream<Either<Failure, Success>>(
+        held.stream,
+        StateError('source cancellation failed'),
+        () {
+          if (!cancellationStarted.isCompleted) {
+            cancellationStarted.complete();
+          }
+        },
+      );
+      addTearDown(() async {
+        if (!held.isClosed) await held.close();
+      });
+      mailboxDashboardController.sessionCurrent =
+          navigationSession(AccountId(Id('unused-cancellation-error')));
+      mailboxDashboardController.setMapMailboxByKey({spam.key: spam});
+      when(emptySpamFolderInteractor.executeWithContext(
+        any as dynamic,
+        any as dynamic,
+      )).thenAnswer((_) => source);
+      clearInteractions(emptySpamFolderInteractor);
+
+      mailboxDashboardController.emptySpamMailboxAction(spamMailbox: spam);
+      held.addError(StateError('settle before cancellation'));
+
+      await cancellationStarted.future.timeout(const Duration(seconds: 1));
+      mailboxDashboardController.emptySpamMailboxAction(spamMailbox: spam);
+      verify(emptySpamFolderInteractor.executeWithContext(
+        any as dynamic,
+        any as dynamic,
+      )).called(2);
+    });
+    test(
+        'Empty Spam cancellation error with throwing toString attempts all '
+        'cleanup and permits retry without an uncaught error', () async {
+      _enableTestErrorLogging();
+      final spam = PresentationMailbox(
+        MailboxId(Id('throwing-cancellation-error-spam')),
+        accountId: testAccountId,
+        role: PresentationMailbox.roleSpam,
+      );
+      final cancellationStarted = Completer<void>();
+      final firstIdle = Completer<void>();
+      var sawLoading = false;
+      final stateSubscription = mailboxDashboardController
+          .viewStateMailboxActionProgress
+          .listen((state) {
+        state.fold((_) {}, (success) {
+          if (success is EmptySpamFolderLoading) sawLoading = true;
+          if (sawLoading &&
+              success == UIState.idle &&
+              !firstIdle.isCompleted) {
+            firstIdle.complete();
+          }
+        });
+      });
+      addTearDown(stateSubscription.cancel);
+      final held =
+          StreamController<Either<Failure, Success>>.broadcast(sync: true);
+      final source = _CancelErrorStream<Either<Failure, Success>>(
+        held.stream,
+        _ThrowingToStringError('cancellation'),
+        () {
+          if (!cancellationStarted.isCompleted) {
+            cancellationStarted.complete();
+          }
+        },
+      );
+      addTearDown(() async {
+        if (!held.isClosed) await held.close();
+      });
+      mailboxDashboardController.sessionCurrent = navigationSession(
+        AccountId(Id('unused-throwing-cancellation-error')),
+      );
+      mailboxDashboardController.setMapMailboxByKey({spam.key: spam});
+      when(emptySpamFolderInteractor.executeWithContext(
+        any as dynamic,
+        any as dynamic,
+      )).thenAnswer((_) => source);
+      clearInteractions(emptySpamFolderInteractor);
+
+      final uncaught = await _captureZonedErrors(() async {
+        mailboxDashboardController.emptySpamMailboxAction(spamMailbox: spam);
+        held.addError(StateError('settle before throwing cancellation'));
+        await cancellationStarted.future.timeout(const Duration(seconds: 1));
+        await firstIdle.future.timeout(const Duration(seconds: 1));
+        mailboxDashboardController.emptySpamMailboxAction(spamMailbox: spam);
+      });
+
+      expect(uncaught, isEmpty);
+      verify(emptySpamFolderInteractor.executeWithContext(
+        any as dynamic,
+        any as dynamic,
+      )).called(2);
+    });
+
+    test(
+        'Empty Spam final observer safely handles an idle listener error with '
+        'throwing toString and permits retry', () async {
+      _enableTestErrorLogging();
+      final spam = PresentationMailbox(
+        MailboxId(Id('throwing-final-observer-spam')),
+        accountId: testAccountId,
+        role: PresentationMailbox.roleSpam,
+      );
+      final firstIdleAttempted = Completer<void>();
+      final retryIdle = Completer<void>();
+      var sawLoading = false;
+      var idleHasThrown = false;
+      final stateSubscription = mailboxDashboardController
+          .viewStateMailboxActionProgress
+          .listen((state) {
+        state.fold((_) {}, (success) {
+          if (success is EmptySpamFolderLoading) sawLoading = true;
+          if (!sawLoading || success != UIState.idle) return;
+          if (!idleHasThrown) {
+            idleHasThrown = true;
+            firstIdleAttempted.complete();
+            throw _ThrowingToStringError('final observer');
+          }
+          if (!retryIdle.isCompleted) retryIdle.complete();
+        });
+      });
+      addTearDown(stateSubscription.cancel);
+      mailboxDashboardController.sessionCurrent =
+          navigationSession(AccountId(Id('unused-final-observer')));
+      mailboxDashboardController.setMapMailboxByKey({spam.key: spam});
+      when(emptySpamFolderInteractor.executeWithContext(
+        any as dynamic,
+        any as dynamic,
+      )).thenAnswer((_) => const Stream.empty());
+      clearInteractions(emptySpamFolderInteractor);
+
+      final uncaught = await _captureZonedErrors(() async {
+        mailboxDashboardController.emptySpamMailboxAction(spamMailbox: spam);
+        await firstIdleAttempted.future.timeout(const Duration(seconds: 1));
+        mailboxDashboardController.emptySpamMailboxAction(spamMailbox: spam);
+        await retryIdle.future.timeout(const Duration(seconds: 1));
+      });
+
+      expect(uncaught, isEmpty);
+      verify(emptySpamFolderInteractor.executeWithContext(
+        any as dynamic,
+        any as dynamic,
+      )).called(2);
+    });
+
+    test(
+        'Empty Spam late completion after same-account Session replacement '
+        'has no list or feedback effects', () async {
+      final delegatedAccountId = AccountId(Id('delegated-empty-spam-stale'));
+      final delegatedSpam = PresentationMailbox(
+        MailboxId(Id('delegated-spam-stale')),
+        accountId: delegatedAccountId,
+        role: PresentationMailbox.roleSpam,
+        isSharedAccount: true,
+        myRights:
+            MailboxRights(true, true, true, true, true, true, true, true, true),
+      );
+      final email = PresentationEmail(
+        id: EmailId(Id('stale-spam-email')),
+        mailboxIds: {delegatedSpam.id: true},
+        mailboxContain: delegatedSpam,
+      );
+      final held =
+          StreamController<Either<Failure, Success>>.broadcast(sync: true);
+      addTearDown(held.close);
+      late dynamic operationContext;
+      mailboxDashboardController.sessionCurrent =
+          navigationSession(delegatedAccountId);
+      mailboxDashboardController.accountId.value = testAccountId;
+      mailboxDashboardController.selectedMailbox.value = delegatedSpam;
+      mailboxDashboardController.emailsInCurrentMailbox.assignAll([email]);
+      mailboxDashboardController.setMapMailboxByKey({
+        MailboxKey(delegatedAccountId, delegatedSpam.id): delegatedSpam,
+      });
+      when(emptySpamFolderInteractor.executeWithContext(
+        any as dynamic,
+        any as dynamic,
+      )).thenAnswer((invocation) {
+        operationContext = invocation.positionalArguments.first;
+        return held.stream;
+      });
+      clearInteractions(mockToastManager);
+
+      mailboxDashboardController.emptySpamMailboxAction(
+        spamMailbox: delegatedSpam,
+      );
+      mailboxDashboardController.sessionCurrent =
+          navigationSession(delegatedAccountId);
+      held.add(Right(EmptySpamFolderSuccess(
+        [email.id!],
+        delegatedSpam.id,
+        context: operationContext,
+      )));
+      await held.close();
+
+      expect(mailboxDashboardController.emailsInCurrentMailbox, [email]);
+      verifyNever(mockToastManager.showMessageSuccess(any));
+      verifyNever(mockToastManager.showMessageFailure(any));
+    });
+
+    test(
+        'Empty Spam partial success removes only confirmed delegated emails',
+        () async {
+      final delegatedAccountId = AccountId(Id('delegated-empty-spam-partial'));
+      final delegatedSpam = PresentationMailbox(
+        MailboxId(Id('delegated-spam-partial')),
+        accountId: delegatedAccountId,
+        role: PresentationMailbox.roleSpam,
+        isSharedAccount: true,
+        myRights:
+            MailboxRights(true, true, true, true, true, true, true, true, true),
+      );
+      final removed = PresentationEmail(
+        id: EmailId(Id('partial-removed')),
+        mailboxIds: {delegatedSpam.id: true},
+        mailboxContain: delegatedSpam,
+      );
+      final retained = PresentationEmail(
+        id: EmailId(Id('partial-retained')),
+        mailboxIds: {delegatedSpam.id: true},
+        mailboxContain: delegatedSpam,
+      );
+      final held =
+          StreamController<Either<Failure, Success>>.broadcast(sync: true);
+      addTearDown(held.close);
+      late dynamic operationContext;
+      mailboxDashboardController.sessionCurrent =
+          navigationSession(delegatedAccountId);
+      mailboxDashboardController.accountId.value = testAccountId;
+      mailboxDashboardController.selectedMailbox.value = delegatedSpam;
+      mailboxDashboardController.dashboardRoute.value = DashboardRoutes.thread;
+      mailboxDashboardController.emailsInCurrentMailbox
+          .assignAll([removed, retained]);
+      mailboxDashboardController.setMapMailboxByKey({
+        MailboxKey(delegatedAccountId, delegatedSpam.id): delegatedSpam,
+      });
+      when(emptySpamFolderInteractor.executeWithContext(
+        any as dynamic,
+        any as dynamic,
+      )).thenAnswer((invocation) {
+        operationContext = invocation.positionalArguments.first;
+        return held.stream;
+      });
+      clearInteractions(mockToastManager);
+
+      mailboxDashboardController.emptySpamMailboxAction(
+        spamMailbox: delegatedSpam,
+      );
+      final cacheError = StateError('cache reconciliation failed');
+      held.add(Right(EmptySpamFolderPartialSuccess(
+        context: operationContext,
+        emailIds: [removed.id!],
+        errors: {
+          Id('partial-retained'): SetError(SetError.forbidden),
+        },
+        failures: [
+          EmptySpamFolderFailureDetail(
+            origin: EmptySpamFolderFailureOrigin.localCache,
+            exception: cacheError,
+          ),
+        ],
+      )));
+      await untilCalled(mockToastManager.showMessageFailure(any));
+
+      expect(mailboxDashboardController.emailsInCurrentMailbox, [retained]);
+      verifyNever(mockToastManager.showMessageSuccess(any));
+      final feedback = verify(
+        mockToastManager.showMessageFailure(captureAny),
+      ).captured.single as EmptySpamFolderFailure;
+      expect(feedback.errors.keys, [Id('partial-retained')]);
+      expect(identical(feedback.exception, cacheError), isTrue);
+    });
+
+    test(
+        'delegated Empty Spam completion does not mutate an active Search '
+        'projection', () async {
+      final delegatedAccountId = AccountId(Id('delegated-empty-spam-search'));
+      final delegatedSpam = PresentationMailbox(
+        MailboxId(Id('delegated-spam-search')),
+        accountId: delegatedAccountId,
+        role: PresentationMailbox.roleSpam,
+        isSharedAccount: true,
+        myRights:
+            MailboxRights(true, true, true, true, true, true, true, true, true),
+      );
+      final email = PresentationEmail(
+        id: EmailId(Id('search-spam-email')),
+        mailboxIds: {delegatedSpam.id: true},
+        mailboxContain: delegatedSpam,
+      );
+      final held =
+          StreamController<Either<Failure, Success>>.broadcast(sync: true);
+      addTearDown(held.close);
+      late dynamic operationContext;
+      mailboxDashboardController.sessionCurrent =
+          navigationSession(delegatedAccountId);
+      mailboxDashboardController.accountId.value = testAccountId;
+      mailboxDashboardController.selectedMailbox.value = delegatedSpam;
+      mailboxDashboardController.setMapMailboxByKey({
+        MailboxKey(delegatedAccountId, delegatedSpam.id): delegatedSpam,
+      });
+      when(emptySpamFolderInteractor.executeWithContext(
+        any as dynamic,
+        any as dynamic,
+      )).thenAnswer((invocation) {
+        operationContext = invocation.positionalArguments.first;
+        return held.stream;
+      });
+      clearInteractions(mockToastManager);
+
+      mailboxDashboardController.emptySpamMailboxAction(
+        spamMailbox: delegatedSpam,
+      );
+      mailboxDashboardController.dashboardRoute.value =
+          DashboardRoutes.searchEmail;
+      mailboxDashboardController.listResultSearch.assignAll([email]);
+      held.add(Right(EmptySpamFolderSuccess(
+        [email.id!],
+        delegatedSpam.id,
+        context: operationContext,
+      )));
+      await untilCalled(mockToastManager.showMessageSuccess(any));
+
+      expect(mailboxDashboardController.listResultSearch, [email]);
+    });
+
+    test('background Empty Spam completion leaves the newly selected mailbox list unchanged',
+        () async {
+      final spam = PresentationMailbox(
+        MailboxId(Id('background-spam')),
+        accountId: testAccountId,
+        role: PresentationMailbox.roleSpam,
+      );
+      final inbox = PresentationMailbox(
+        MailboxId(Id('background-inbox')),
+        accountId: testAccountId,
+        role: PresentationMailbox.roleInbox,
+      );
+      final inboxEmail = PresentationEmail(
+        id: EmailId(Id('background-email')),
+        mailboxIds: {inbox.id: true},
+        mailboxContain: inbox,
+      );
+      final held =
+          StreamController<Either<Failure, Success>>.broadcast(sync: true);
+      addTearDown(() async {
+        if (!held.isClosed) await held.close();
+      });
+      late dynamic operationContext;
+      mailboxDashboardController.sessionCurrent =
+          navigationSession(AccountId(Id('unused-background')));
+      mailboxDashboardController.selectedMailbox.value = spam;
+      mailboxDashboardController.dashboardRoute.value = DashboardRoutes.thread;
+      mailboxDashboardController.setMapMailboxByKey({
+        spam.key: spam,
+        inbox.key: inbox,
+      });
+      when(emptySpamFolderInteractor.executeWithContext(
+        any as dynamic,
+        any as dynamic,
+      )).thenAnswer((invocation) {
+        operationContext = invocation.positionalArguments.first;
+        return held.stream;
+      });
+
+      mailboxDashboardController.emptySpamMailboxAction(spamMailbox: spam);
+      mailboxDashboardController.selectedMailbox.value = inbox;
+      mailboxDashboardController.emailsInCurrentMailbox.assignAll([inboxEmail]);
+      held.add(Right(EmptySpamFolderSuccess(
+        [inboxEmail.id!],
+        spam.id,
+        context: operationContext,
+      )));
+      await untilCalled(mockToastManager.showMessageSuccess(any));
+
+      expect(mailboxDashboardController.emailsInCurrentMailbox, [inboxEmail]);
+    });
+
+    test('Empty Spam permits independent primary and delegated keys', () {
+      final delegatedAccountId =
+          AccountId(Id('delegated-empty-spam-concurrent'));
+      final primarySpam = PresentationMailbox(
+        MailboxId(Id('primary-spam-concurrent')),
+        accountId: testAccountId,
+        role: PresentationMailbox.roleSpam,
+      );
+      final delegatedSpam = PresentationMailbox(
+        MailboxId(Id('delegated-spam-concurrent')),
+        accountId: delegatedAccountId,
+        role: PresentationMailbox.roleSpam,
+        isSharedAccount: true,
+        myRights:
+            MailboxRights(true, true, true, true, true, true, true, true, true),
+      );
+      mailboxDashboardController.sessionCurrent =
+          navigationSession(delegatedAccountId);
+      mailboxDashboardController.accountId.value = testAccountId;
+      mailboxDashboardController.setMapMailboxByKey({
+        MailboxKey(testAccountId, primarySpam.id): primarySpam,
+        MailboxKey(delegatedAccountId, delegatedSpam.id): delegatedSpam,
+      });
+      when(emptySpamFolderInteractor.executeWithContext(
+        any as dynamic,
+        any as dynamic,
+      )).thenAnswer((_) => const Stream.empty());
+      clearInteractions(emptySpamFolderInteractor);
+
+      mailboxDashboardController.emptySpamMailboxAction(
+        spamMailbox: primarySpam,
+      );
+      mailboxDashboardController.emptySpamMailboxAction(
+        spamMailbox: delegatedSpam,
+      );
+
+      verify(emptySpamFolderInteractor.executeWithContext(
+        any as dynamic,
+        any as dynamic,
+      )).called(2);
+    });
+
+    test('Empty Spam eligibility rejects missing account and null delegated ACL',
+        () {
+      final delegatedAccountId = AccountId(Id('delegated-eligibility'));
+      final missingAccountSpam = PresentationMailbox(
+        MailboxId(Id('missing-account-spam')),
+        accountId: delegatedAccountId,
+        role: PresentationMailbox.roleSpam,
+        isSharedAccount: true,
+        myRights:
+            MailboxRights(true, true, true, true, true, true, true, true, true),
+      );
+      mailboxDashboardController.sessionCurrent = navigationSession(
+        delegatedAccountId,
+        includeDelegatedAccount: false,
+      );
+      mailboxDashboardController.setMapMailboxByKey({
+        missingAccountSpam.key: missingAccountSpam,
+      });
+
+      expect(
+        mailboxDashboardController.isEmptySpamEligible(missingAccountSpam),
+        isFalse,
+      );
+      mailboxDashboardController.emptySpamMailboxAction(
+        spamMailbox: missingAccountSpam,
+      );
+      verifyNever(emptySpamFolderInteractor.executeWithContext(
+        any as dynamic,
+        any as dynamic,
+      ));
+
+      final nullRightsSpam = PresentationMailbox(
+        MailboxId(Id('null-rights-spam')),
+        accountId: delegatedAccountId,
+        role: PresentationMailbox.roleSpam,
+        isSharedAccount: true,
+      );
+      mailboxDashboardController.sessionCurrent =
+          navigationSession(delegatedAccountId);
+      mailboxDashboardController.setMapMailboxByKey({
+        nullRightsSpam.key: nullRightsSpam,
+      });
+
+      expect(
+        mailboxDashboardController.isEmptySpamEligible(nullRightsSpam),
+        isFalse,
+      );
+      mailboxDashboardController.emptySpamMailboxAction(
+        spamMailbox: nullRightsSpam,
+      );
+      verifyNever(emptySpamFolderInteractor.executeWithContext(
+        any as dynamic,
+        any as dynamic,
+      ));
+      verify(mockToastManager.showMessageFailure(any)).called(2);
+    });
+
+    test('Empty Spam eligibility and banners reject non-concrete pseudo mailboxes',
+        () {
+      final validSpam = PresentationMailbox(
+        MailboxId(Id('eligible-primary-spam')),
+        accountId: testAccountId,
+        role: PresentationMailbox.roleSpam,
+        totalEmails: TotalEmails(UnsignedInt(1)),
+      );
+      final nonSpam = PresentationMailbox(
+        MailboxId(Id('not-spam')),
+        accountId: testAccountId,
+        role: PresentationMailbox.roleInbox,
+        totalEmails: TotalEmails(UnsignedInt(1)),
+      );
+      final syntheticRoot = PresentationMailbox(
+        MailboxId(Id('synthetic-root')),
+        role: PresentationMailbox.roleSpam,
+        totalEmails: TotalEmails(UnsignedInt(1)),
+      );
+      mailboxDashboardController.sessionCurrent =
+          navigationSession(AccountId(Id('unused')));
+      mailboxDashboardController.setMapMailboxByKey({
+        validSpam.key: validSpam,
+        nonSpam.key: nonSpam,
+      });
+      when(responsiveUtils.isWebDesktop(context)).thenReturn(true);
+
+      expect(mailboxDashboardController.isEmptySpamEligible(validSpam), isTrue);
+      expect(
+        mailboxDashboardController.isEmptySpamBannerEnabledOnWeb(
+          context,
+          validSpam,
+        ),
+        isTrue,
+      );
+      for (final invalid in [
+        nonSpam,
+        PresentationMailbox.favoriteFolder,
+        syntheticRoot,
+        validSpam.copyWith(),
+      ]) {
+        expect(
+          mailboxDashboardController.isEmptySpamEligible(invalid),
+          isFalse,
+        );
+        expect(
+          mailboxDashboardController.isEmptySpamBannerEnabledOnWeb(
+            context,
+            invalid,
+          ),
+          isFalse,
+        );
+      }
+    });
+
+    test('Empty Spam rejects account removal after dispatch',
+        () async {
+      final delegatedAccountId = AccountId(Id('delegated-currency'));
+      final spam = PresentationMailbox(
+        MailboxId(Id('currency-spam')),
+        accountId: delegatedAccountId,
+        role: PresentationMailbox.roleSpam,
+        isSharedAccount: true,
+        myRights:
+            MailboxRights(true, true, true, true, true, true, true, true, true),
+      );
+      final held =
+          StreamController<Either<Failure, Success>>.broadcast(sync: true);
+      addTearDown(() async {
+        if (!held.isClosed) await held.close();
+      });
+      late dynamic operationContext;
+      final session = navigationSession(delegatedAccountId);
+      mailboxDashboardController.sessionCurrent = session;
+      mailboxDashboardController.setMapMailboxByKey({spam.key: spam});
+      when(emptySpamFolderInteractor.executeWithContext(
+        any as dynamic,
+        any as dynamic,
+      )).thenAnswer((invocation) {
+        operationContext = invocation.positionalArguments.first;
+        return held.stream;
+      });
+      clearInteractions(mockToastManager);
+
+      mailboxDashboardController.emptySpamMailboxAction(spamMailbox: spam);
+      session.accounts.remove(delegatedAccountId);
+      held.add(Right(EmptySpamFolderSuccess(
+        [EmailId(Id('stale-currency-email'))],
+        spam.id,
+        context: operationContext,
+      )));
+      await held.close();
+
+      verifyNever(mockToastManager.showMessageSuccess(any));
+      verifyNever(mockToastManager.showMessageFailure(any));
+    });
+
+    test('Empty Spam rejects in-place primary replacement',
+        () async {
+      final delegatedAccountId = AccountId(Id('delegated-capability-loss'));
+      final primarySpam = PresentationMailbox(
+        MailboxId(Id('primary-capability-loss-spam')),
+        accountId: testAccountId,
+        role: PresentationMailbox.roleSpam,
+      );
+      final held =
+          StreamController<Either<Failure, Success>>.broadcast(sync: true);
+      addTearDown(() async {
+        if (!held.isClosed) await held.close();
+      });
+      late dynamic operationContext;
+      final session = navigationSession(delegatedAccountId);
+      mailboxDashboardController.sessionCurrent = session;
+      mailboxDashboardController.setMapMailboxByKey({
+        primarySpam.key: primarySpam,
+      });
+      when(emptySpamFolderInteractor.executeWithContext(
+        any as dynamic,
+        any as dynamic,
+      )).thenAnswer((invocation) {
+        operationContext = invocation.positionalArguments.first;
+        return held.stream;
+      });
+      clearInteractions(mockToastManager);
+
+      mailboxDashboardController.emptySpamMailboxAction(
+        spamMailbox: primarySpam,
+      );
+      session.primaryAccounts[CapabilityIdentifier.jmapMail] =
+          delegatedAccountId;
+      held.add(Left(EmptySpamFolderFailure(
+        StateError('late failure'),
+        context: operationContext,
+      )));
+      await held.close();
+
+      verifyNever(mockToastManager.showMessageSuccess(any));
+      verifyNever(mockToastManager.showMessageFailure(any));
+    });
+
+    test('Empty Spam rejects capability loss after dispatch', () async {
+      final delegatedAccountId = AccountId(Id('delegated-capability-only'));
+      final spam = PresentationMailbox(
+        MailboxId(Id('capability-only-spam')),
+        accountId: delegatedAccountId,
+        role: PresentationMailbox.roleSpam,
+        isSharedAccount: true,
+        myRights:
+            MailboxRights(true, true, true, true, true, true, true, true, true),
+      );
+      final held =
+          StreamController<Either<Failure, Success>>.broadcast(sync: true);
+      addTearDown(() async {
+        if (!held.isClosed) await held.close();
+      });
+      late dynamic operationContext;
+      final session = navigationSession(delegatedAccountId);
+      mailboxDashboardController.sessionCurrent = session;
+      mailboxDashboardController.setMapMailboxByKey({spam.key: spam});
+      when(emptySpamFolderInteractor.executeWithContext(
+        any as dynamic,
+        any as dynamic,
+      )).thenAnswer((invocation) {
+        operationContext = invocation.positionalArguments.first;
+        return held.stream;
+      });
+      clearInteractions(mockToastManager);
+
+      mailboxDashboardController.emptySpamMailboxAction(spamMailbox: spam);
+      session.accounts[delegatedAccountId]
+          ?.accountCapabilities
+          .remove(CapabilityIdentifier.jmapMail);
+      held.add(Right(EmptySpamFolderSuccess(
+        [EmailId(Id('stale-capability-email'))],
+        spam.id,
+        context: operationContext,
+      )));
+      await held.close();
+
+      verifyNever(mockToastManager.showMessageSuccess(any));
+      verifyNever(mockToastManager.showMessageFailure(any));
+    });
+
+    test('Empty Spam rejects concrete mailbox removal and replacement',
+        () async {
+      final delegatedAccountId = AccountId(Id('delegated-mailbox-currency'));
+      final spam = PresentationMailbox(
+        MailboxId(Id('mailbox-currency-spam')),
+        accountId: delegatedAccountId,
+        role: PresentationMailbox.roleSpam,
+        isSharedAccount: true,
+        myRights:
+            MailboxRights(true, true, true, true, true, true, true, true, true),
+      );
+      mailboxDashboardController.sessionCurrent =
+          navigationSession(delegatedAccountId);
+
+      for (final replacement in <PresentationMailbox?>[null, spam.copyWith()]) {
+        final held =
+            StreamController<Either<Failure, Success>>.broadcast(sync: true);
+        late dynamic operationContext;
+        mailboxDashboardController.setMapMailboxByKey({spam.key: spam});
+        when(emptySpamFolderInteractor.executeWithContext(
+          any as dynamic,
+          any as dynamic,
+        )).thenAnswer((invocation) {
+          operationContext = invocation.positionalArguments.first;
+          return held.stream;
+        });
+        clearInteractions(mockToastManager);
+
+        mailboxDashboardController.emptySpamMailboxAction(spamMailbox: spam);
+        mailboxDashboardController.setMapMailboxByKey({
+          if (replacement != null) replacement.key: replacement,
+        });
+        held.add(Right(EmptySpamFolderSuccess(
+          [EmailId(Id('stale-mailbox-email'))],
+          spam.id,
+          context: operationContext,
+        )));
+        await held.close();
+        await Future<void>.delayed(Duration.zero);
+
+        verifyNever(mockToastManager.showMessageSuccess(any));
+        verifyNever(mockToastManager.showMessageFailure(any));
+      }
+    });
+
+    test('Empty Spam teardown cancels a stalled source and ignores late success',
+        () async {
+      final spam = PresentationMailbox(
+        MailboxId(Id('teardown-success-spam')),
+        accountId: testAccountId,
+        role: PresentationMailbox.roleSpam,
+      );
+      final canceled = Completer<void>();
+      final held = StreamController<Either<Failure, Success>>.broadcast(
+        sync: true,
+        onCancel: () {
+          if (!canceled.isCompleted) canceled.complete();
+        },
+      );
+      addTearDown(() async {
+        if (!held.isClosed) await held.close();
+      });
+      mailboxDashboardController.sessionCurrent =
+          navigationSession(AccountId(Id('unused-teardown')));
+      mailboxDashboardController.setMapMailboxByKey({spam.key: spam});
+      when(emptySpamFolderInteractor.executeWithContext(
+        any as dynamic,
+        any as dynamic,
+      )).thenAnswer((_) => held.stream);
+      clearInteractions(mockToastManager);
+
+      mailboxDashboardController.emptySpamMailboxAction(spamMailbox: spam);
+      mailboxDashboardController.onClose();
+      await canceled.future.timeout(const Duration(seconds: 1));
+      held.add(Right(EmptySpamFolderSuccess(
+        [EmailId(Id('late-success'))],
+        spam.id,
+      )));
+      await Future<void>.delayed(Duration.zero);
+
+      verifyNever(mockToastManager.showMessageSuccess(any));
+      verifyNever(mockToastManager.showMessageFailure(any));
+    });
+
+    test('Empty Spam teardown safely ignores a late source error', () async {
+      final spam = PresentationMailbox(
+        MailboxId(Id('teardown-failure-spam')),
+        accountId: testAccountId,
+        role: PresentationMailbox.roleSpam,
+      );
+      final canceled = Completer<void>();
+      final held = StreamController<Either<Failure, Success>>.broadcast(
+        sync: true,
+        onCancel: () {
+          if (!canceled.isCompleted) canceled.complete();
+        },
+      );
+      addTearDown(() async {
+        if (!held.isClosed) await held.close();
+      });
+      mailboxDashboardController.sessionCurrent =
+          navigationSession(AccountId(Id('unused-teardown-failure')));
+      mailboxDashboardController.setMapMailboxByKey({spam.key: spam});
+      when(emptySpamFolderInteractor.executeWithContext(
+        any as dynamic,
+        any as dynamic,
+      )).thenAnswer((_) => held.stream);
+      clearInteractions(mockToastManager);
+
+      mailboxDashboardController.emptySpamMailboxAction(spamMailbox: spam);
+      mailboxDashboardController.onClose();
+      await canceled.future.timeout(const Duration(seconds: 1));
+      held.addError(StateError('late teardown source failure'));
+
+      verifyNever(mockToastManager.showMessageSuccess(any));
+      verifyNever(mockToastManager.showMessageFailure(any));
+    });
+
+    test('Empty Spam counters cover primary, partial, all-failure and same-id isolation',
+        () async {
+      final delegatedAccountId = AccountId(Id('delegated-counter'));
+      final sharedSpamId = MailboxId(Id('counter-spam'));
+      final primarySpam = PresentationMailbox(
+        sharedSpamId,
+        accountId: testAccountId,
+        role: PresentationMailbox.roleSpam,
+        totalEmails: TotalEmails(UnsignedInt(5)),
+      );
+      final delegatedSpam = PresentationMailbox(
+        sharedSpamId,
+        accountId: delegatedAccountId,
+        role: PresentationMailbox.roleSpam,
+        isSharedAccount: true,
+        myRights:
+            MailboxRights(true, true, true, true, true, true, true, true, true),
+        totalEmails: TotalEmails(UnsignedInt(7)),
+      );
+      when(emailReceiveManager.pendingSharedFileInfo)
+          .thenAnswer((_) => BehaviorSubject.seeded([]));
+      when(downloadController.downloadUIAction)
+          .thenAnswer((_) => Rxn(DownloadUIAction.idle));
+      when(labelController.isLabelSettingEnabled).thenReturn(RxBool(false));
+      Get.put(mailboxDashboardController);
+      final counterMailboxController = MailboxController(
+        createNewMailboxInteractor,
+        deleteMultipleMailboxInteractor,
+        renameMailboxInteractor,
+        moveMailboxInteractor,
+        subscribeMailboxInteractor,
+        subscribeMultipleMailboxInteractor,
+        subaddressingInteractor,
+        createDefaultMailboxInteractor,
+        moveFolderContentInteractor,
+        treeBuilder,
+        verifyNameInteractor,
+        getAllMailboxInteractor,
+        refreshAllMailboxInteractor,
+      );
+      counterMailboxController.updateMailboxTree(
+        mailboxCollection: MailboxCollection(
+          allMailboxes: [primarySpam, delegatedSpam],
+          defaultTree: MailboxTree(MailboxNode.root()
+            ..childrenItems = [MailboxNode(primarySpam)]),
+          personalTree: MailboxTree(MailboxNode.root()),
+          teamMailboxTree: MailboxTree(MailboxNode.root()
+            ..childrenItems = [MailboxNode(delegatedSpam)]),
+        ),
+        isRefreshTrigger: false,
+      );
+      mailboxDashboardController.sessionCurrent =
+          navigationSession(delegatedAccountId);
+      mailboxDashboardController.accountId.value = testAccountId;
+      mailboxDashboardController.setMapMailboxByKey({
+        primarySpam.key: primarySpam,
+        delegatedSpam.key: delegatedSpam,
+      });
+      counterMailboxController.onInit();
+      addTearDown(counterMailboxController.onClose);
+      var dispatchCount = 0;
+      when(emptySpamFolderInteractor.executeWithContext(
+        any as dynamic,
+        any as dynamic,
+      )).thenAnswer((invocation) {
+        final operationContext = invocation.positionalArguments.first;
+        dispatchCount++;
+        if (dispatchCount == 2) {
+          return Stream.value(Right(EmptySpamFolderSuccess(
+            [EmailId(Id('primary-confirmed'))],
+            sharedSpamId,
+            context: operationContext,
+          )));
+        }
+        if (dispatchCount == 3) {
+          final partialId = EmailId(Id('primary-partial-confirmed'));
+          return Stream.value(Right(EmptySpamFolderPartialSuccess(
+            context: operationContext,
+            emailIds: [partialId, partialId],
+            errors: {
+              Id('primary-partial-failed'): SetError(SetError.forbidden),
+            },
+          )));
+        }
+        if (dispatchCount == 4) {
+          return Stream.value(Left(EmptySpamFolderFailure(
+            StateError('all failed'),
+            context: operationContext,
+          )));
+        }
+        return Stream.value(Right(EmptySpamFolderSuccess(
+          [
+            EmailId(Id('confirmed-one')),
+            EmailId(Id('confirmed-one')),
+            EmailId(Id('confirmed-two')),
+          ],
+          sharedSpamId,
+          context: operationContext,
+        )));
+      });
+
+      mailboxDashboardController.emptySpamMailboxAction(
+        spamMailbox: delegatedSpam,
+      );
+      await untilCalled(mockToastManager.showMessageSuccess(any));
+
+      expect(
+        counterMailboxController.defaultMailboxTree.value
+            .findNodeByKey(primarySpam.key)
+            ?.item
+            .totalEmails
+            ?.value
+            .value
+            .toInt(),
+        5,
+      );
+
+      clearInteractions(mockToastManager);
+      mailboxDashboardController.emptySpamMailboxAction(
+        spamMailbox: primarySpam,
+      );
+      await untilCalled(mockToastManager.showMessageSuccess(any));
+      expect(
+        counterMailboxController.defaultMailboxTree.value
+            .findNodeByKey(primarySpam.key)
+            ?.item
+            .totalEmails
+            ?.value
+            .value
+            .toInt(),
+        4,
+      );
+      expect(
+        counterMailboxController.teamMailboxesTree.value
+            .findNodeByKey(delegatedSpam.key)
+            ?.item
+            .totalEmails
+            ?.value
+            .value
+            .toInt(),
+        5,
+      );
+
+      clearInteractions(mockToastManager);
+      mailboxDashboardController.emptySpamMailboxAction(
+        spamMailbox: primarySpam,
+      );
+      await untilCalled(mockToastManager.showMessageFailure(any));
+      expect(
+        counterMailboxController.defaultMailboxTree.value
+            .findNodeByKey(primarySpam.key)
+            ?.item
+            .totalEmails
+            ?.value
+            .value
+            .toInt(),
+        3,
+      );
+
+      clearInteractions(mockToastManager);
+      mailboxDashboardController.emptySpamMailboxAction(
+        spamMailbox: primarySpam,
+      );
+      await untilCalled(mockToastManager.showMessageFailure(any));
+      expect(
+        counterMailboxController.defaultMailboxTree.value
+            .findNodeByKey(primarySpam.key)
+            ?.item
+            .totalEmails
+            ?.value
+            .value
+            .toInt(),
+        3,
+      );
+      expect(
+        counterMailboxController.teamMailboxesTree.value
+            .findNodeByKey(delegatedSpam.key)
+            ?.item
+            .totalEmails
+            ?.value
+            .value
+            .toInt(),
+        5,
+      );
+    });
+
     test('should returns Junk mailbox ID if it exists', () {
       // Arrange
       final spamMailboxId = MailboxId(Id('spam-id'));

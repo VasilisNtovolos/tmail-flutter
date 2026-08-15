@@ -17,6 +17,7 @@ import 'package:model/email/presentation_email.dart';
 import 'package:tmail_ui_user/features/thread/data/model/email_change_response.dart';
 import 'package:tmail_ui_user/features/thread/domain/model/email_response.dart';
 import 'package:tmail_ui_user/features/thread/domain/model/filter_message_option.dart';
+import 'package:tmail_ui_user/features/thread/domain/model/empty_spam_folder_result.dart';
 import 'package:tmail_ui_user/features/thread/domain/model/search_emails_response.dart';
 
 abstract class ThreadDataSource {
@@ -91,6 +92,14 @@ abstract class ThreadDataSource {
     MailboxId mailboxId,
     int totalEmails,
     StreamController<dartz.Either<Failure, Success>> onProgressController
+  );
+
+  Future<EmptySpamFolderResult> emptySpamFolder(
+    Session session,
+    AccountId accountId,
+    MailboxId mailboxId,
+    int totalEmails,
+    StreamController<dartz.Either<Failure, Success>> onProgressController,
   );
 
   Future<PresentationEmail> getEmailById(Session session, AccountId accountId, EmailId emailId, {Properties? properties});

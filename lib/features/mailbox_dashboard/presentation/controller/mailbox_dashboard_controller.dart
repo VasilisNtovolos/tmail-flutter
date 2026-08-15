@@ -210,6 +210,7 @@ import 'package:tmail_ui_user/features/server_settings/domain/usecases/get_serve
 import 'package:tmail_ui_user/features/thread/domain/model/filter_message_option.dart';
 import 'package:tmail_ui_user/features/thread/domain/model/search_query.dart';
 import 'package:tmail_ui_user/features/thread/domain/state/empty_spam_folder_state.dart';
+import 'package:tmail_ui_user/features/thread/domain/model/empty_spam_operation_context.dart';
 import 'package:tmail_ui_user/features/thread/domain/state/empty_trash_folder_state.dart';
 import 'package:tmail_ui_user/features/thread/domain/state/get_email_by_id_state.dart';
 import 'package:tmail_ui_user/features/thread/domain/state/mark_as_multiple_email_read_state.dart';
@@ -242,6 +243,78 @@ import 'package:tmail_ui_user/main/utils/ios_notification_manager.dart';
 import 'package:tmail_ui_user/main/utils/ios_sharing_manager.dart';
 import 'package:tmail_ui_user/main/utils/toast_manager.dart';
 import 'package:uuid/uuid.dart';
+
+void _logEmptySpamLifecycleError(
+  String message, {
+  Object? exception,
+  StackTrace? stackTrace,
+}) {
+  try {
+    logError(
+      message,
+      exception: exception,
+      stackTrace: stackTrace,
+    );
+  } catch (_) {
+    try {
+      logError('Empty Spam lifecycle logging failed');
+    } catch (_) {
+      // Logging must never affect Empty Spam settlement or cleanup.
+    }
+  }
+}
+class _EmptySpamInFlight {
+  final EmptySpamOperationContext context;
+  final PresentationMailbox mailbox;
+  final Completer<void> settled = Completer<void>();
+  StreamController<Either<Failure, Success>>? progressController;
+  StreamSubscription<Either<Failure, Success>>? progressSubscription;
+  StreamSubscription<Either<Failure, Success>>? operationSubscription;
+  Future<void>? _disposeFuture;
+
+  _EmptySpamInFlight(this.context, this.mailbox);
+
+  void settle() {
+    if (!settled.isCompleted) settled.complete();
+  }
+
+  Future<void> dispose() => _disposeFuture ??= _dispose();
+
+  Future<void> _dispose() async {
+    settle();
+    final operation = operationSubscription;
+    final progress = progressSubscription;
+    final controller = progressController;
+    operationSubscription = null;
+    progressSubscription = null;
+    progressController = null;
+
+    final cleanup = <Future<void>>[
+      if (operation != null)
+        _disposeResource('operation cancellation', operation.cancel),
+      if (progress != null)
+        _disposeResource('progress cancellation', progress.cancel),
+      if (controller != null && !controller.isClosed)
+        _disposeResource('progress controller close', controller.close),
+    ];
+    await Future.wait(cleanup);
+  }
+
+  Future<void> _disposeResource(
+    String resource,
+    FutureOr<void> Function() dispose,
+  ) async {
+    try {
+      await dispose();
+    } catch (error, stackTrace) {
+      _logEmptySpamLifecycleError(
+        '_EmptySpamInFlight::_dispose $resource',
+        exception: error,
+        stackTrace: stackTrace,
+      );
+    }
+  }
+}
 
 class MailboxDashBoardController extends ReloadableController
     with ContactSupportMixin,
@@ -422,6 +495,7 @@ class MailboxDashBoardController extends ReloadableController
   // Unlike [mapMailboxById] (primary only), this is the source for cross-account
   // lookups such as the empty-folder child cascade.
   Map<MailboxKey, PresentationMailbox> mapMailboxByKey = {};
+  final Map<MailboxKey, _EmptySpamInFlight> _emptySpamInFlight = {};
   final emailsInCurrentMailbox = <PresentationEmail>[].obs;
   final listResultSearch = RxList<PresentationEmail>();
   PresentationMailbox? outboxMailbox;
@@ -634,6 +708,8 @@ class MailboxDashBoardController extends ReloadableController
       _handleUpdateSendingEmailSuccess(success);
     } else if (success is EmptySpamFolderSuccess) {
       _emptySpamFolderSuccess(success);
+    } else if (success is EmptySpamFolderPartialSuccess) {
+      _emptySpamFolderPartialSuccess(success);
     } else if (success is MarkAsEmailReadSuccess) {
       if (!isCurrentEmailMutation(success.context, sessionCurrent)) return;
       _markAsReadEmailSuccess(success);
@@ -3222,48 +3298,272 @@ class MailboxDashBoardController extends ReloadableController
     MailboxId? spamFolderId,
     int totalEmails = 0
   }) {
-    onCancelSelectionEmail?.call();
-
-    spamFolderId ??= spamMailboxId;
-    final accountId = this.accountId.value;
-
-    if (accountId == null || sessionCurrent == null) {
-      consumeState(Stream.value(Left(EmptySpamFolderFailure(NotFoundSessionException()))));
-      return;
-    }
-
-    if (spamFolderId == null) {
-      consumeState(Stream.value(Left(EmptySpamFolderFailure(NotFoundSpamMailboxException()))));
-      return;
-    }
-
-    if (CapabilityIdentifier.jmapMailboxClear.isSupported(sessionCurrent!, accountId)) {
-      clearMailbox(
-        sessionCurrent!,
-        accountId,
-        spamFolderId,
-        PresentationMailbox.roleSpam,
-      );
+    final selected = selectedMailbox.value;
+    final requestedId = spamFolderId ?? selected?.id ?? spamMailboxId;
+    PresentationMailbox? mailbox;
+    if (selected != null &&
+        selected.isSpam &&
+        selected.id == requestedId) {
+      mailbox = selected;
     } else {
-      consumeState(_emptySpamFolderInteractor.execute(
-        sessionCurrent!,
-        accountId,
-        spamFolderId,
-        totalEmails,
-        progressStateController,
-      ));
+      final primaryAccountId = accountId.value;
+      if (primaryAccountId != null && requestedId != null) {
+        mailbox = mapMailboxByKey[MailboxKey(primaryAccountId, requestedId)] ??
+            mapMailboxById[requestedId];
+      }
+    }
+    if (mailbox == null) {
+      onCancelSelectionEmail?.call();
+      _rejectEmptySpam(NotFoundSpamMailboxException());
+      return;
+    }
+    emptySpamMailboxAction(
+      spamMailbox: mailbox,
+      onCancelSelectionEmail: onCancelSelectionEmail,
+      totalEmails: totalEmails,
+    );
+  }
+
+  void emptySpamMailboxAction({
+    required PresentationMailbox spamMailbox,
+    Function? onCancelSelectionEmail,
+    int? totalEmails,
+  }) {
+    onCancelSelectionEmail?.call();
+    final session = sessionCurrent;
+    final ownerAccountId = spamMailbox.accountId;
+    if (session == null || ownerAccountId == null) {
+      _rejectEmptySpam(NotFoundSessionException());
+      return;
+    }
+    if (!isEmptySpamEligible(spamMailbox)) {
+      _rejectEmptySpam(NotFoundSpamMailboxException());
+      return;
+    }
+    final mailboxKey = MailboxKey(ownerAccountId, spamMailbox.id);
+    if (_emptySpamInFlight.containsKey(mailboxKey)) return;
+
+    final context = EmptySpamOperationContext.capture(
+      session: session,
+      mailboxKey: mailboxKey,
+      totalEmails: totalEmails ?? spamMailbox.countTotalEmails,
+    );
+    _emptySpamInFlight[mailboxKey] = _EmptySpamInFlight(
+      context,
+      spamMailbox,
+    );
+    unawaited(_executeEmptySpam(context).catchError((error, stackTrace) {
+      _logEmptySpamLifecycleError(
+        'MailboxDashBoardController::emptySpamMailboxAction',
+        exception: error,
+        stackTrace: stackTrace,
+      );
+    }));
+  }
+
+  bool isEmptySpamEligible(PresentationMailbox? mailbox) {
+    final session = sessionCurrent;
+    final ownerAccountId = mailbox?.accountId;
+    if (session == null || mailbox == null || ownerAccountId == null) {
+      return false;
+    }
+    final mailboxKey = MailboxKey(ownerAccountId, mailbox.id);
+    final primaryAccountId =
+        session.primaryAccounts[CapabilityIdentifier.jmapMail];
+    final isDelegated = ownerAccountId != primaryAccountId;
+
+    return mailbox.isSpam &&
+        !mailbox.isVirtualFolder &&
+        identical(mapMailboxByKey[mailboxKey], mailbox) &&
+        CapabilityIdentifier.jmapMail.isSupported(session, ownerAccountId) &&
+        (!isDelegated || mailbox.myRights?.mayRemoveItems == true);
+  }
+
+  Future<void> _executeEmptySpam(
+    EmptySpamOperationContext context,
+  ) async {
+    final operation = _emptySpamInFlight[context.mailboxKey];
+    if (operation == null || !identical(operation.context, context)) return;
+    try {
+      syncViewStateMailboxActionProgress(
+        newState: Right(EmptySpamFolderLoading(context: context)),
+      );
+      final progressController =
+          StreamController<Either<Failure, Success>>.broadcast(sync: true);
+      operation.progressController = progressController;
+      final progressSubscription = progressController.stream.listen((state) {
+        if (isCurrentEmptySpamContext(context) &&
+            !progressStateController.isClosed) {
+          progressStateController.add(state);
+        }
+      });
+      operation.progressSubscription = progressSubscription;
+      final operationStream = _emptySpamFolderInteractor.executeWithContext(
+            context,
+            progressController,
+          ) ??
+          const Stream<Either<Failure, Success>>.empty();
+      operation.operationSubscription = operationStream.listen(
+        (state) {
+          try {
+            if (isCurrentEmptySpamContext(context)) onData(state);
+          } catch (error, stackTrace) {
+            _handleEmptySpamStreamError(operation, error, stackTrace);
+            return;
+          }
+          final isTerminal = state.fold(
+            (failure) => failure is EmptySpamFolderFailure,
+            (success) => success is EmptySpamFolderSuccess ||
+                success is EmptySpamFolderPartialSuccess,
+          );
+          if (isTerminal) operation.settle();
+        },
+        onError: (Object error, StackTrace stackTrace) {
+          _handleEmptySpamStreamError(operation, error, stackTrace);
+        },
+        onDone: operation.settle,
+      );
+      await operation.settled.future;
+    } catch (error, stackTrace) {
+      _handleEmptySpamStreamError(operation, error, stackTrace);
+    } finally {
+      await _disposeEmptySpamOperation(operation);
+      final currentOperation = _emptySpamInFlight[context.mailboxKey];
+      if (currentOperation != null &&
+          identical(currentOperation.context, context)) {
+        _emptySpamInFlight.remove(context.mailboxKey);
+      }
+      if (isEmailMutationControllerAlive && _emptySpamInFlight.isEmpty) {
+        syncViewStateMailboxActionProgress(newState: Right(UIState.idle));
+      }
     }
   }
 
-  void _emptySpamFolderSuccess(EmptySpamFolderSuccess success) {
-    syncViewStateMailboxActionProgress(newState: Right(UIState.idle));
+  void _handleEmptySpamStreamError(
+    _EmptySpamInFlight operation,
+    Object error,
+    StackTrace stackTrace,
+  ) {
+    try {
+      _logEmptySpamLifecycleError(
+        'MailboxDashBoardController::_executeEmptySpam',
+        exception: error,
+        stackTrace: stackTrace,
+      );
+      if (isCurrentEmptySpamContext(operation.context)) {
+        try {
+          onData(Left(EmptySpamFolderFailure(
+            error,
+            context: operation.context,
+          )));
+        } catch (presentationError, presentationStackTrace) {
+          _logEmptySpamLifecycleError(
+            'MailboxDashBoardController::_handleEmptySpamStreamError '
+            'presentation',
+            exception: presentationError,
+            stackTrace: presentationStackTrace,
+          );
+        }
+      }
+    } finally {
+      operation.settle();
+    }
+  }
 
-    handleDeleteEmailsInMailbox(
+  Future<void> _disposeEmptySpamOperation(
+    _EmptySpamInFlight operation,
+  ) async {
+    try {
+      await operation.dispose();
+    } catch (error, stackTrace) {
+      _logEmptySpamLifecycleError(
+        'MailboxDashBoardController::_disposeEmptySpamOperation',
+        exception: error,
+        stackTrace: stackTrace,
+      );
+    }
+  }
+
+  bool isCurrentEmptySpamContext(EmptySpamOperationContext context) {
+    final session = sessionCurrent;
+    if (!isEmailMutationControllerAlive ||
+        session == null ||
+        !identical(session, context.session) ||
+        session.primaryAccounts[CapabilityIdentifier.jmapMail] !=
+            context.primaryAccountId ||
+        !CapabilityIdentifier.jmapMail
+            .isSupported(session, context.mailboxKey.accountId)) {
+      return false;
+    }
+    final currentMailbox = mapMailboxByKey[context.mailboxKey];
+    final operation = _emptySpamInFlight[context.mailboxKey];
+    return currentMailbox != null &&
+        operation != null &&
+        identical(operation.context, context) &&
+        identical(currentMailbox, operation.mailbox) &&
+        currentMailbox.accountId == context.mailboxKey.accountId &&
+        currentMailbox.id == context.mailboxKey.mailboxId &&
+        currentMailbox.isSpam &&
+        !currentMailbox.isVirtualFolder;
+  }
+
+  bool _finishEmptySpam(EmptySpamOperationContext context) {
+    final operation = _emptySpamInFlight[context.mailboxKey];
+    if (operation == null ||
+        !identical(operation.context, context) ||
+        !isCurrentEmptySpamContext(context) ||
+        !identical(mapMailboxByKey[context.mailboxKey], operation.mailbox)) {
+      return false;
+    }
+    _emptySpamInFlight.remove(context.mailboxKey);
+    return true;
+  }
+
+  void _rejectEmptySpam(Object exception) {
+    _handleEmptySpamFolderFailure(EmptySpamFolderFailure(exception));
+  }
+
+  void _emptySpamFolderSuccess(EmptySpamFolderSuccess success) {
+    final context = success.context;
+    if (context != null && !_finishEmptySpam(context)) return;
+    if (_emptySpamInFlight.isEmpty) {
+      syncViewStateMailboxActionProgress(newState: Right(UIState.idle));
+    }
+
+    if (context != null) {
+      handleDeleteEmailsInMailboxByKey(
+        emailIds: success.emailIds,
+        mailboxKey: context.mailboxKey,
+      );
+    } else {
+      handleDeleteEmailsInMailbox(
       emailIds: success.emailIds,
       affectedMailboxId: success.mailboxId,
-    );
+      );
+    }
 
     toastManager.showMessageSuccess(success);
+  }
+
+  void _emptySpamFolderPartialSuccess(
+    EmptySpamFolderPartialSuccess success,
+  ) {
+    if (!_finishEmptySpam(success.context)) return;
+    if (_emptySpamInFlight.isEmpty) {
+      syncViewStateMailboxActionProgress(newState: Right(UIState.idle));
+    }
+    handleDeleteEmailsInMailboxByKey(
+      emailIds: success.emailIds,
+      mailboxKey: success.context.mailboxKey,
+    );
+    toastManager.showMessageFailure(EmptySpamFolderFailure(
+      success.failures.isNotEmpty
+          ? success.failures.last.exception
+          : success.errors,
+      context: success.context,
+      errors: success.errors,
+      failures: success.failures,
+    ));
   }
 
   bool isEmptySpamBannerEnabledOnWeb(
@@ -3271,7 +3571,7 @@ class MailboxDashBoardController extends ReloadableController
     PresentationMailbox? mailbox
   ) {
     return mailbox != null &&
-      mailbox.isSpam &&
+      isEmptySpamEligible(mailbox) &&
       mailbox.countTotalEmails > 0 &&
       !searchController.isSearchActive() &&
       responsiveUtils.isWebDesktop(context);
@@ -3282,7 +3582,7 @@ class MailboxDashBoardController extends ReloadableController
     PresentationMailbox? mailbox
   ) {
     return mailbox != null &&
-      mailbox.isSpam &&
+      isEmptySpamEligible(mailbox) &&
       mailbox.countTotalEmails > 0 &&
       !searchController.isSearchActive() &&
       !responsiveUtils.isWebDesktop(context);
@@ -3302,7 +3602,7 @@ class MailboxDashBoardController extends ReloadableController
         ..onConfirmAction(AppLocalizations.of(context).delete_all, () {
           popBack();
           if (spamMailbox.countTotalEmails > 0) {
-            emptySpamFolderAction(spamFolderId: spamMailbox.id, totalEmails: spamMailbox.countTotalEmails);
+            emptySpamMailboxAction(spamMailbox: spamMailbox);
           } else {
             appToast.showToastWarningMessage(
               context,
@@ -3322,7 +3622,7 @@ class MailboxDashBoardController extends ReloadableController
         onConfirmAction: () {
           popBack();
           if (spamMailbox.countTotalEmails > 0) {
-            emptySpamFolderAction(spamFolderId: spamMailbox.id, totalEmails: spamMailbox.countTotalEmails);
+            emptySpamMailboxAction(spamMailbox: spamMailbox);
           } else {
             appToast.showToastWarningMessage(
               context,
@@ -3695,7 +3995,11 @@ class MailboxDashBoardController extends ReloadableController
   }
 
   void _handleEmptySpamFolderFailure(EmptySpamFolderFailure failure) {
-    syncViewStateMailboxActionProgress(newState: Right(UIState.idle));
+    final context = failure.context;
+    if (context != null && !_finishEmptySpam(context)) return;
+    if (_emptySpamInFlight.isEmpty) {
+      syncViewStateMailboxActionProgress(newState: Right(UIState.idle));
+    }
 
     toastManager.showMessageFailure(failure);
   }
@@ -3902,6 +4206,11 @@ class MailboxDashBoardController extends ReloadableController
 
   @override
   void onClose() {
+    final emptySpamOperations = _emptySpamInFlight.values.toList();
+    _emptySpamInFlight.clear();
+    for (final operation in emptySpamOperations) {
+      unawaited(_disposeEmptySpamOperation(operation));
+    }
     if (PlatformInfo.isWeb) {
       listSearchFilterScrollController?.dispose();
     }

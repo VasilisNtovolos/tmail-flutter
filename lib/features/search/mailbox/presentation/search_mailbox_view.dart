@@ -219,6 +219,7 @@ class SearchMailboxView extends GetWidget<SearchMailboxController>
       isSubAddressingSupported,
       controller.imagePaths,
       AppLocalizations.of(context),
+      controller.dashboardController.isEmptySpamEligible(mailbox),
     );
     return contextMenuActions
       .map((action) => _mailboxFocusedMenuItem(context, action, mailbox))
@@ -282,6 +283,7 @@ class SearchMailboxView extends GetWidget<SearchMailboxController>
         isSubAddressingSupported,
         controller.imagePaths,
         AppLocalizations.of(context),
+        controller.dashboardController.isEmptySpamEligible(mailbox),
       );
 
       if (contextMenuActions.isEmpty) return Future.value();
@@ -308,6 +310,7 @@ class SearchMailboxView extends GetWidget<SearchMailboxController>
         controller.dashboardController.enableSpamReport,
         deletedMessageVaultSupported,
         isSubAddressingSupported,
+        controller.dashboardController.isEmptySpamEligible(mailbox),
       );
 
       if (popupMenuActions.isEmpty) Future.value();
